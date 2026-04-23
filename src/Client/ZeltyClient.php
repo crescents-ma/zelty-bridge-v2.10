@@ -204,33 +204,27 @@ class ZeltyClient
      * Set a webhook to null to delete it.
      */
     public function upsertWebhooks(string $apiKey, array $webhooks, string $secretKey): ?array
-{
-    try {
-        $response = $this->httpClient->request(
-            'POST',
-            $this->baseUrl . '/webhooks',
-            [
-                'headers' => $this->headers($apiKey),
-                'json' => [
-                    'webhooks' => $webhooks,
-                    'secret_key' => $secretKey,
-                ],
-            ]
-        );
+    {
+        try {
+            $response = $this->httpClient->request(
+                'POST',
+                $this->baseUrl . '/webhooks',
+                [
+                    'headers' => $this->headers($apiKey),
+                    'json' => [
+                        'webhooks' => $webhooks,
+                        'secret_key' => $secretKey,
+                    ],
+                ]
+            );
 
-        return json_decode($response->getContent(false), true, flags: JSON_THROW_ON_ERROR);
-    } catch (ExceptionInterface|\JsonException $e) {
-        $this->logger->error('[zelty] upsertWebhooks failed', [
-            'base_url' => $this->baseUrl,
-            'error' => $e->getMessage(),
-        ]);
-
-        return null;
-    }
-}
-
+            return json_decode($response->getContent(false), true, flags: JSON_THROW_ON_ERROR);
         } catch (ExceptionInterface|\JsonException $e) {
-            $this->logger->error('[zelty] upsertWebhooks failed', ['error' => $e->getMessage()]);
+            $this->logger->error('[zelty] upsertWebhooks failed', [
+                'base_url' => $this->baseUrl,
+                'error' => $e->getMessage(),
+            ]);
+
             return null;
         }
     }
