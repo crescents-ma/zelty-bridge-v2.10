@@ -70,6 +70,9 @@ class ZeltyClient
         if ($showAll) {
             $query['show_all'] = 'true';
         }
+        if ($allRestaurants) {
+            $query['all_restaurants'] = 'true';
+        }
 
         $data = $this->get($apiKey, '/catalog/tags', $query);
         return $data['tags'] ?? null;
