@@ -3,6 +3,4 @@
 .idea
 .env.local
 .env.*.local
-/var/
-/vendor/
-desktop.ini
+vendor/
