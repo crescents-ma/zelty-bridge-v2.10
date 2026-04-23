@@ -19,6 +19,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 class ZeltyClient
 {
     private string $baseUrl;
+    private ?array $lastError = null;
 
     public function __construct(
         readonly private HttpClientInterface $httpClient,
@@ -205,39 +206,66 @@ class ZeltyClient
      */
     public function upsertWebhooks(string $apiKey, array $webhooks, string $secretKey): ?array
     {
+    $this->lastError = null;
+
+    try {
+        $response = $this->httpClient->request(
+            'POST',
+            $this->baseUrl . '/webhooks',
+            [
+                'headers' => $this->headers($apiKey),
+                'json' => [
+                    'webhooks' => $webhooks,
+                    'secret_key' => $secretKey,
+                ],
+            ]
+        );
+
+        $body = $response->getContent(false);
+        $statusCode = $response->getStatusCode();
+
         try {
-            $response = $this->httpClient->request(
-                'POST',
-                $this->baseUrl . '/webhooks',
-                [
-                    'headers' => $this->headers($apiKey),
-                    'json' => [
-                        'webhooks' => $webhooks,
-                        'secret_key' => $secretKey,
-                    ],
-                ]
-            );
-            // Pass false so Symfony does NOT throw on 4xx/5xx responses — inspect the body ourselves
-            $body = $response->getContent(false);
-            $statusCode = $response->getStatusCode();
-
             $data = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            $data = null;
+        }
 
-            if ($statusCode >= 400) {
-                $this->logger->error('[zelty] upsertWebhooks HTTP error', [
-                    'status' => $statusCode,
-                    'errno'  => $data['errno'] ?? null,
-                    'error'  => $data['error'] ?? $data['message'] ?? $body,
-                ]);
-                return null;
-            }
+        if ($statusCode >= 400) {
+            $this->lastError = [
+                'status' => $statusCode,
+                'errno' => is_array($data) ? ($data['errno'] ?? null) : null,
+                'message' => is_array($data)
+                    ? ($data['error'] ?? $data['message'] ?? $body)
+                    : $body,
+            ];
 
-            return $data;
-        } catch (ExceptionInterface|\JsonException $e) {
-            $this->logger->error('[zelty] upsertWebhooks failed', ['error' => $e->getMessage()]);
+            $this->logger->error('[zelty] upsertWebhooks HTTP error', [
+                'base_url' => $this->baseUrl,
+                'status' => $statusCode,
+                'errno' => $this->lastError['errno'],
+                'error' => $this->lastError['message'],
+            ]);
+
             return null;
         }
+
+        return is_array($data) ? $data : [];
+    } catch (ExceptionInterface|\JsonException $e) {
+        $this->lastError = ['message' => $e->getMessage()];
+
+        $this->logger->error('[zelty] upsertWebhooks failed', [
+            'base_url' => $this->baseUrl,
+            'error' => $e->getMessage(),
+        ]);
+
+        return null;
     }
+}
+
+    public function getLastError(): ?array
+{
+    return $this->lastError;
+}
 
     // ========================================================================
     // Restaurants
