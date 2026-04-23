@@ -303,8 +303,8 @@ class AppController
             throw new AccessDeniedHttpException('Missing zelty_api_key credential');
         }
 
-        $tags = $this->zeltyClient->getTags($apiKey, showAll: true);
         $tags = $this->zeltyClient->getTags($apiKey, showAll: true, allRestaurants: true);
+        $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true, allRestaurants: true);
 
         if ($tags === null || $dishes === null) {
             throw new \RuntimeException('Could not fetch Zelty catalog');
