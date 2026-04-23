@@ -206,66 +206,66 @@ class ZeltyClient
      */
     public function upsertWebhooks(string $apiKey, array $webhooks, string $secretKey): ?array
     {
-    $this->lastError = null;
-
-    try {
-        $response = $this->httpClient->request(
-            'POST',
-            $this->baseUrl . '/webhooks',
-            [
-                'headers' => $this->headers($apiKey),
-                'json' => [
-                    'webhooks' => $webhooks,
-                    'secret_key' => $secretKey,
-                ],
-            ]
-        );
-
-        $body = $response->getContent(false);
-        $statusCode = $response->getStatusCode();
+        $this->lastError = null;
 
         try {
-            $data = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            $data = null;
-        }
+            $response = $this->httpClient->request(
+                'POST',
+                $this->baseUrl . '/webhooks',
+                [
+                    'headers' => $this->headers($apiKey),
+                    'json' => [
+                        'webhooks' => $webhooks,
+                        'secret_key' => $secretKey,
+                    ],
+                ]
+            );
 
-        if ($statusCode >= 400) {
-            $this->lastError = [
-                'status' => $statusCode,
-                'errno' => is_array($data) ? ($data['errno'] ?? null) : null,
-                'message' => is_array($data)
-                    ? ($data['error'] ?? $data['message'] ?? $body)
-                    : $body,
-            ];
+            $body = $response->getContent(false);
+            $statusCode = $response->getStatusCode();
 
-            $this->logger->error('[zelty] upsertWebhooks HTTP error', [
+            try {
+                $data = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException) {
+                $data = null;
+            }
+
+            if ($statusCode >= 400) {
+                $this->lastError = [
+                    'status' => $statusCode,
+                    'errno' => is_array($data) ? ($data['errno'] ?? null) : null,
+                    'message' => is_array($data)
+                        ? ($data['error'] ?? $data['message'] ?? $body)
+                        : $body,
+                ];
+
+                $this->logger->error('[zelty] upsertWebhooks HTTP error', [
+                    'base_url' => $this->baseUrl,
+                    'status' => $statusCode,
+                    'errno' => $this->lastError['errno'],
+                    'error' => $this->lastError['message'],
+                ]);
+
+                return null;
+            }
+
+            return is_array($data) ? $data : [];
+        } catch (ExceptionInterface|\JsonException $e) {
+            $this->lastError = ['message' => $e->getMessage()];
+
+            $this->logger->error('[zelty] upsertWebhooks failed', [
                 'base_url' => $this->baseUrl,
-                'status' => $statusCode,
-                'errno' => $this->lastError['errno'],
-                'error' => $this->lastError['message'],
+                'error' => $e->getMessage(),
             ]);
 
             return null;
         }
-
-        return is_array($data) ? $data : [];
-    } catch (ExceptionInterface|\JsonException $e) {
-        $this->lastError = ['message' => $e->getMessage()];
-
-        $this->logger->error('[zelty] upsertWebhooks failed', [
-            'base_url' => $this->baseUrl,
-            'error' => $e->getMessage(),
-        ]);
-
-        return null;
     }
-}
 
     public function getLastError(): ?array
-{
-    return $this->lastError;
-}
+    {
+        return $this->lastError;
+    }
 
     // ========================================================================
     // Restaurants
