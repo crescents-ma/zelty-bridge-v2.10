@@ -7,11 +7,14 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git unzip libzip-dev \
     && docker-php-ext-install bcmath zip \
-    && a2dismod mpm_event mpm_worker || true \
-    && a2enmod mpm_prefork rewrite \
+    && rm -f /etc/apache2/mods-enabled/mpm_event.* \
+              /etc/apache2/mods-enabled/mpm_worker.* \
+              /etc/apache2/mods-enabled/mpm_prefork.* \
+    && ln -s /etc/apache2/mods-available/mpm_prefork.load /etc/apache2/mods-enabled/mpm_prefork.load \
+    && ln -s /etc/apache2/mods-available/mpm_prefork.conf /etc/apache2/mods-enabled/mpm_prefork.conf \
+    && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
-# Write a clean vhost — no sed hacks
 RUN echo '<VirtualHost *:80>\n\
     DocumentRoot /var/www/html/public\n\
     <Directory /var/www/html/public>\n\
@@ -34,7 +37,6 @@ RUN composer install \
 
 COPY . .
 
-# Create ALL required runtime dirs BEFORE chown
 RUN mkdir -p var/cache var/log var/secrets var/idempotency \
     && composer dump-autoload --classmap-authoritative --no-dev \
     && chown -R www-data:www-data /var/www/html \
