@@ -469,13 +469,15 @@ class AppController
         ], $secret);
 
         if ($result === null) {
-            // Webhook registration failed — remove the orphan secret
+            // Webhook registration failed; remove the orphan secret.
             $this->secretStore->delete($restaurantId);
-            return new JsonResponse(['ok' => false, 'error' => 'Webhook registration failed'], 502);
-        }
 
-        return new JsonResponse(['ok' => true]);
-    }
+            return new JsonResponse([
+                'ok' => false,
+                'error' => 'Webhook registration failed',
+                'details' => $this->zeltyClient->getLastError(),
+            ], 502);
+        }
 
     // ========================================================================
     // Helpers
