@@ -60,7 +60,11 @@ class ZeltyClient
     /**
      * GET /catalog/tags → { tags: [...], errno: 0 }
      */
-    public function getTags(string $apiKey, bool $showAll = false): ?array
+    public function getTags(
+        string $apiKey,
+        bool $showAll = false,
+        bool $allRestaurants = false
+    ): ?array
     {
         $query = [];
         if ($showAll) {
