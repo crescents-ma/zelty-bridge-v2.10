@@ -1,0 +1,18 @@
+# ============================================================================
+# SAFETY NET — blocks access to sensitive files if Document Root is wrong.
+#
+# In a correct deployment, Document Root should point to the public/ folder,
+# and visitors never see this directory. This .htaccess is a belt-and-braces
+# safeguard in case someone misconfigures hosting and points the web root
+# at the project folder.
+# ============================================================================
+
+# Block access to every file in the project root
+<FilesMatch ".*">
+    Require all denied
+</FilesMatch>
+
+# But still allow public/ to work if Apache follows symlinks
+<Directory "public">
+    Require all granted
+</Directory>
