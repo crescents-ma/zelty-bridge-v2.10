@@ -49,8 +49,18 @@ RUN mkdir -p var/cache var/log var/secrets var/idempotency \
     && composer dump-autoload --classmap-authoritative --no-dev \
     && chown -R www-data:www-data /var/www/html
 
-# startup: replace __PORT__ with Railway $PORT, run php-fpm + nginx
-RUN echo '#!/bin/sh\nset -e\nsed -i "s/__PORT__/${PORT:-80}/g" /etc/nginx/sites-available/default\nphp-fpm -D\nexec nginx -g "daemon off;"' > /start.sh && chmod +x /start.sh
+# startup: replace __PORT__, clear Symfony cache so Railway env vars are read fresh, then start
+RUN echo '#!/bin/sh\n\
+set -e\n\
+sed -i "s/__PORT__/${PORT:-80}/g" /etc/nginx/sites-available/default\n\
+\n\
+# Clear Symfony cache at runtime so env vars injected by Railway are picked up\n\
+APP_ENV=prod php /var/www/html/bin/console cache:clear --no-warmup --no-ansi 2>/dev/null || true\n\
+APP_ENV=prod php /var/www/html/bin/console cache:warmup --no-ansi 2>/dev/null || true\n\
+chown -R www-data:www-data /var/www/html/var\n\
+\n\
+php-fpm -D\n\
+exec nginx -g "daemon off;"' > /start.sh && chmod +x /start.sh
 
 EXPOSE 80
 
