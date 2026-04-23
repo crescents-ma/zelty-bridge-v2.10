@@ -52,7 +52,7 @@ cp .env .env.local
 APP_ENV=prod
 APP_SECRET=<random-32-chars>
 MARKETPLACE_API_APP_TOKEN=<your-tryb-app-token>
-ZELTY_API_BASE_URI=https://api.zelty.fr
+ZELTY_API_BASE_URI=https://api.zelty.fr/2.10
 ```
 
 ---
@@ -71,7 +71,7 @@ APP_PUBLIC_URL=https://your-service.up.railway.app
 APP_STORAGE_PATH=/data/app-storage
 MARKETPLACE_API_BASE_URI=https://api.digitalwallet.cards/api/v2/marketplace
 MARKETPLACE_API_APP_TOKEN=<your-tryb-app-token>
-ZELTY_API_BASE_URI=https://api.zelty.fr
+ZELTY_API_BASE_URI=https://api.zelty.fr/2.10
 ```
 
 5. After deploy, confirm the service is live at:
