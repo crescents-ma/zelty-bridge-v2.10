@@ -16,6 +16,7 @@ RUN echo 'server { \n\
     server_name _; \n\
     root /var/www/html/public; \n\
     index index.php; \n\
+    client_max_body_size 1m; \n\
     location / { \n\
         try_files $uri $uri/ /index.php$is_args$args; \n\
     } \n\
@@ -23,6 +24,9 @@ RUN echo 'server { \n\
         fastcgi_pass 127.0.0.1:9000; \n\
         fastcgi_index index.php; \n\
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; \n\
+        fastcgi_param REQUEST_METHOD $request_method; \n\
+        fastcgi_param CONTENT_TYPE $content_type; \n\
+        fastcgi_param CONTENT_LENGTH $content_length; \n\
         include fastcgi_params; \n\
     } \n\
 }' > /etc/nginx/sites-available/default
