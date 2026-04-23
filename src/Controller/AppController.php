@@ -49,7 +49,11 @@ class AppController
         // Public URL of THIS app — used when registering the Zelty webhook.
         // Configured via APP_PUBLIC_URL env var so it's stable regardless
         // of proxy headers.
-        $this->publicBaseUrl = rtrim($params->get('app_public_url') ?: '', '/');
+        $this->publicBaseUrl = rtrim(
+            $params->get('app_public_url')
+                ?: ($_SERVER['RAILWAY_PUBLIC_DOMAIN'] ?? $_ENV['RAILWAY_PUBLIC_DOMAIN'] ?? ''),
+            '/'
+        );
         if ($this->publicBaseUrl !== '' && !str_contains($this->publicBaseUrl, '://')) {
             $this->publicBaseUrl = 'https://' . $this->publicBaseUrl;
         }
