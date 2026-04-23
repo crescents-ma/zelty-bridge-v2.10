@@ -229,6 +229,17 @@ class ZeltyClient
     }
 }
 
+        } catch (ExceptionInterface|\JsonException $e) {
+            $this->logger->error('[zelty] upsertWebhooks failed', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    public function getLastError(): ?array
+    {
+        return $this->lastError;
+    }
+
     // ========================================================================
     // Restaurants
     // ========================================================================
