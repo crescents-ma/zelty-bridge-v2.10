@@ -50,6 +50,9 @@ class AppController
         // Configured via APP_PUBLIC_URL env var so it's stable regardless
         // of proxy headers.
         $this->publicBaseUrl = rtrim($params->get('app_public_url') ?: '', '/');
+        if ($this->publicBaseUrl !== '' && !str_contains($this->publicBaseUrl, '://')) {
+            $this->publicBaseUrl = 'https://' . $this->publicBaseUrl;
+        }
     }
 
     #[Route('/health', methods: 'GET')]
