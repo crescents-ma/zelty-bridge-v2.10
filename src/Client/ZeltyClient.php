@@ -19,7 +19,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 class ZeltyClient
 {
     private string $baseUrl;
-    private ?array $lastError = null;
+    private $lastError = null;
 
     public function __construct(
         readonly private HttpClientInterface $httpClient,
