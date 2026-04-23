@@ -304,7 +304,7 @@ class AppController
         }
 
         $tags = $this->zeltyClient->getTags($apiKey, showAll: true);
-        $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true, allRestaurants: true);
+        $tags = $this->zeltyClient->getTags($apiKey, showAll: true, allRestaurants: true);
 
         if ($tags === null || $dishes === null) {
             throw new \RuntimeException('Could not fetch Zelty catalog');
