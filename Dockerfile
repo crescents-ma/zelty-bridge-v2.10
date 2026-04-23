@@ -1,6 +1,5 @@
 FROM php:8.3-apache
 
-ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
@@ -12,7 +11,7 @@ RUN apt-get update \
     && a2enmod mpm_prefork rewrite \
     && rm -rf /var/lib/apt/lists/*
 
-# Set document root and enable AllowOverride (clean approach, no sed hacks)
+# Write a clean vhost — no sed hacks
 RUN echo '<VirtualHost *:80>\n\
     DocumentRoot /var/www/html/public\n\
     <Directory /var/www/html/public>\n\
@@ -35,8 +34,10 @@ RUN composer install \
 
 COPY . .
 
-RUN composer dump-autoload --classmap-authoritative --no-dev \
-    && mkdir -p var/cache var/log \
-    && chown -R www-data:www-data /var/www/html
+# Create ALL required runtime dirs BEFORE chown
+RUN mkdir -p var/cache var/log var/secrets var/idempotency \
+    && composer dump-autoload --classmap-authoritative --no-dev \
+    && chown -R www-data:www-data /var/www/html \
+    && chmod 755 /var/www/html/public
 
 EXPOSE 80
