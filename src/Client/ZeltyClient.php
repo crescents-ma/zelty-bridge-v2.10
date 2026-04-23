@@ -182,7 +182,7 @@ class ZeltyClient
                     'json' => ['points' => $points],
                 ]
             );
-            $data = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+            $data = json_decode($response->getContent(false), true, flags: JSON_THROW_ON_ERROR);
             return isset($data['errno']) && $data['errno'] === 0;
         } catch (ExceptionInterface|\JsonException $e) {
             $this->logger->error('[zelty] add_loyalty failed', [
@@ -217,7 +217,22 @@ class ZeltyClient
                     ],
                 ]
             );
-            return json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+            // Pass false so Symfony does NOT throw on 4xx/5xx responses — inspect the body ourselves
+            $body = $response->getContent(false);
+            $statusCode = $response->getStatusCode();
+
+            $data = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+            if ($statusCode >= 400) {
+                $this->logger->error('[zelty] upsertWebhooks HTTP error', [
+                    'status' => $statusCode,
+                    'errno'  => $data['errno'] ?? null,
+                    'error'  => $data['error'] ?? $data['message'] ?? $body,
+                ]);
+                return null;
+            }
+
+            return $data;
         } catch (ExceptionInterface|\JsonException $e) {
             $this->logger->error('[zelty] upsertWebhooks failed', ['error' => $e->getMessage()]);
             return null;
@@ -252,7 +267,7 @@ class ZeltyClient
                     'query' => $query,
                 ]
             );
-            return json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+            return json_decode($response->getContent(false), true, flags: JSON_THROW_ON_ERROR);
         } catch (ExceptionInterface|\JsonException $e) {
             $this->logger->error('[zelty] GET ' . $path . ' failed', [
                 'error' => $e->getMessage(),
