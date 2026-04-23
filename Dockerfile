@@ -10,9 +10,16 @@ RUN apt-get update \
     && docker-php-ext-install bcmath zip \
     && a2dismod mpm_event mpm_worker || true \
     && a2enmod mpm_prefork rewrite \
-    && sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
-    && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
     && rm -rf /var/lib/apt/lists/*
+
+# Set document root and enable AllowOverride (clean approach, no sed hacks)
+RUN echo '<VirtualHost *:80>\n\
+    DocumentRoot /var/www/html/public\n\
+    <Directory /var/www/html/public>\n\
+        AllowOverride All\n\
+        Require all granted\n\
+    </Directory>\n\
+</VirtualHost>' > /etc/apache2/sites-available/000-default.conf
 
 WORKDIR /var/www/html
 
