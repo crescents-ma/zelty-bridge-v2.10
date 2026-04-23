@@ -1,27 +1,30 @@
-FROM php:8.3-apache
+FROM php:8.3-fpm
 
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git unzip libzip-dev \
+    && apt-get install -y --no-install-recommends \
+       git unzip libzip-dev nginx \
     && docker-php-ext-install bcmath zip \
-    && rm -f /etc/apache2/mods-enabled/mpm_event.* \
-              /etc/apache2/mods-enabled/mpm_worker.* \
-              /etc/apache2/mods-enabled/mpm_prefork.* \
-    && ln -s /etc/apache2/mods-available/mpm_prefork.load /etc/apache2/mods-enabled/mpm_prefork.load \
-    && ln -s /etc/apache2/mods-available/mpm_prefork.conf /etc/apache2/mods-enabled/mpm_prefork.conf \
-    && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
-RUN echo '<VirtualHost *:80>\n\
-    DocumentRoot /var/www/html/public\n\
-    <Directory /var/www/html/public>\n\
-        AllowOverride All\n\
-        Require all granted\n\
-    </Directory>\n\
-</VirtualHost>' > /etc/apache2/sites-available/000-default.conf
+# nginx config
+RUN echo 'server { \n\
+    listen 80; \n\
+    root /var/www/html/public; \n\
+    index index.php; \n\
+    location / { \n\
+        try_files $uri $uri/ /index.php$is_args$args; \n\
+    } \n\
+    location ~ \.php$ { \n\
+        fastcgi_pass 127.0.0.1:9000; \n\
+        fastcgi_index index.php; \n\
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; \n\
+        include fastcgi_params; \n\
+    } \n\
+}' > /etc/nginx/sites-available/default
 
 WORKDIR /var/www/html
 
@@ -39,7 +42,11 @@ COPY . .
 
 RUN mkdir -p var/cache var/log var/secrets var/idempotency \
     && composer dump-autoload --classmap-authoritative --no-dev \
-    && chown -R www-data:www-data /var/www/html \
-    && chmod 755 /var/www/html/public
+    && chown -R www-data:www-data /var/www/html
+
+# startup script: run nginx + php-fpm together
+RUN echo '#!/bin/sh\nnginx\nphp-fpm' > /start.sh && chmod +x /start.sh
 
 EXPOSE 80
+
+CMD ["/start.sh"]
