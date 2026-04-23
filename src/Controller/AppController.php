@@ -58,6 +58,36 @@ class AppController
         return new JsonResponse(['ok' => true]);
     }
 
+       #[Route('/', methods: 'GET')]
+    #[Route('/index.php', methods: 'GET')]
+    public function home(): JsonResponse
+    {
+        return new JsonResponse([
+            'ok' => true,
+            'service' => 'TRYB Loyalty x Zelty bridge',
+            'endpoints' => [
+                'health' => 'GET /health',
+                'checkCredentials' => 'POST /check-credentials',
+                'getInventory' => 'POST /get-inventory',
+                'postback' => 'POST /postback',
+                'onOrder' => 'POST /on-order',
+            ],
+        ]);
+    }
+
+    #[Route('/check-credentials', methods: 'GET')]
+    #[Route('/get-inventory', methods: 'GET')]
+    #[Route('/postback', methods: 'GET')]
+    #[Route('/on-order', methods: 'GET')]
+    public function endpointInfo(Request $request): JsonResponse
+    {
+        return new JsonResponse([
+            'ok' => true,
+            'message' => 'This endpoint is live, but it must be called with POST by TRYB or Zelty.',
+            'path' => $request->getPathInfo(),
+            'method' => 'POST',
+        ]);
+    }
     // ========================================================================
     // Zelty order.ended webhook receiver
     // ========================================================================
