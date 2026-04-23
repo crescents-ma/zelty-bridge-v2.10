@@ -475,9 +475,14 @@ class AppController
             return new JsonResponse([
                 'ok' => false,
                 'error' => 'Webhook registration failed',
-                'details' => $this->zeltyClient->getLastError(),
+                'details' => method_exists($this->zeltyClient, 'getLastError')
+                    ? $this->zeltyClient->getLastError()
+                    : null,
             ], 502);
         }
+
+        return new JsonResponse(['ok' => true]);
+    }
 
     // ========================================================================
     // Helpers
