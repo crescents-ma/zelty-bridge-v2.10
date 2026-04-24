@@ -11,26 +11,36 @@ class WebhookVerifier
     ) {
     }
 
-    public function verify(Request $request, string $restaurantId): bool
-    {
-        $providedSignature = $this->extractSignature($request);
+public function verify(Request $request, string $restaurantId): bool
+{
+    $providedSignature = $this->extractSignature($request);
+    $secret = $this->secretStore->get($restaurantId);
 
-        if (!$providedSignature) {
-            return false;
-        }
-
-        $secret = $this->secretStore->get($restaurantId);
-        if (!$secret) {
-            return false;
-        }
-
-        $rawBody = $request->getContent();
-        $expected = hash_hmac('sha256', $rawBody, $secret);
-
-        $provided = preg_replace('/^sha256=/', '', trim($providedSignature));
-
-        return hash_equals($expected, $provided);
+    if (!$providedSignature || !$secret) {
+        error_log(json_encode([
+            'webhook_verify' => 'missing_signature_or_secret',
+            'restaurant_id' => $restaurantId,
+            'has_signature' => (bool) $providedSignature,
+            'has_secret' => (bool) $secret,
+            'headers' => $request->headers->all(),
+        ]));
+        return false;
     }
+
+    $rawBody = $request->getContent();
+    $expected = hash_hmac('sha256', $rawBody, $secret);
+    $provided = preg_replace('/^sha256=/', '', trim($providedSignature));
+
+    error_log(json_encode([
+        'webhook_verify' => 'compare',
+        'restaurant_id' => $restaurantId,
+        'provided' => $provided,
+        'expected' => $expected,
+        'match' => hash_equals($expected, $provided),
+    ]));
+
+    return hash_equals($expected, $provided);
+}
 
     private function extractSignature(Request $request): ?string
     {
