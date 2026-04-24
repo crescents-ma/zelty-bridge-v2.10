@@ -229,10 +229,10 @@ class ZeltyClient
         }
     }
 
-    public function getLastError(): ?array
-    {
-        return $this->lastError;
-    }
+    //public function getLastError(): ?array
+    //{
+        //return $this->lastError;
+    //}
 
     // ========================================================================
     // Restaurants
