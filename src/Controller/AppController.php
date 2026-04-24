@@ -58,7 +58,10 @@ class AppController
     #[Route('/health', methods: 'GET')]
     public function health(): JsonResponse
     {
-        return new JsonResponse(['ok' => true]);
+        return new JsonResponse([
+    'ok' => true,
+    'registered_target' => $webhookTarget,
+]);
     }
 
     #[Route('/', methods: 'GET')]
