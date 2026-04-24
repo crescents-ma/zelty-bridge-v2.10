@@ -234,6 +234,12 @@ class ZeltyClient
         //return $this->lastError;
     //}
 
+public function getWebhooks(string $apiKey): ?array
+{
+    $data = $this->get($apiKey, '/webhooks');
+    return is_array($data) ? $data : null;
+}
+    
     // ========================================================================
     // Restaurants
     // ========================================================================
