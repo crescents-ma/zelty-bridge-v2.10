@@ -114,12 +114,12 @@ public function health(): JsonResponse
         }
 
         if (!$this->webhookVerifier->verify($request, $restaurantId)) {
-            $this->logger->warning('[zelty_app] invalid webhook token', [
+            $this->logger->warning('[zelty_app] invalid webhook signature', [
                 'restaurant_id' => $restaurantId,
                 'event_id' => $eventId,
             ]);
 
-            return new JsonResponse(['error' => 'Invalid token'], 401);
+            return new JsonResponse(['error' => 'Invalid signature'], 401);
         }
 
         if (!$this->idempotencyStore->markProcessed($eventId)) {
