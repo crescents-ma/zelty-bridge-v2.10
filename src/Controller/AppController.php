@@ -448,40 +448,39 @@ class AppController
             return new JsonResponse(['ok' => false, 'error' => 'APP_PUBLIC_URL must be a valid https URL'], 500);
         }
 
-        // Generate a webhook signing secret, store it, and register with Zelty
-        $secret = bin2hex(random_bytes(32)); // 256 bits
-        $stored = $this->secretStore->store($restaurantId, $secret);
+// Ask Zelty to register/update the webhook
+$requestedSecret = bin2hex(random_bytes(32)); // fallback if Zelty echoes it back
+$webhookTarget = $this->publicBaseUrl . '/on-order';
 
-        if (!$stored) {
-            return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
-        }
+$result = $this->zeltyClient->upsertWebhooks($apiKey, [
+    'order.ended' => [
+        'target' => $webhookTarget,
+        'version' => 'v2',
+    ],
+    'order.status.update' => [
+        'target' => $webhookTarget,
+        'version' => 'v2',
+    ],
+], $requestedSecret);
 
-        $webhookTarget = $this->publicBaseUrl . '/on-order';
-        $result = $this->zeltyClient->upsertWebhooks($apiKey, [
-            'order.ended' => [
-                'target' => $webhookTarget,
-                'version' => 'v2',
-            ],
-            'order.status.update' => [
-                'target' => $webhookTarget,
-                'version' => 'v2',
-            ],
-        ], $secret);
+if ($result === null) {
+    return new JsonResponse([
+        'ok' => false,
+        'error' => 'Webhook registration failed',
+        'details' => method_exists($this->zeltyClient, 'getLastError')
+            ? $this->zeltyClient->getLastError()
+            : null,
+    ], 502);
+}
 
-        if ($result === null) {
-            // Webhook registration failed; remove the orphan secret.
-            $this->secretStore->delete($restaurantId);
+// Zelty may return the real secret_key to use for signature verification.
+$finalSecret = $result['secret_key'] ?? $requestedSecret;
 
-            return new JsonResponse([
-                'ok' => false,
-                'error' => 'Webhook registration failed',
-                'details' => method_exists($this->zeltyClient, 'getLastError')
-                    ? $this->zeltyClient->getLastError()
-                    : null,
-            ], 502);
-        }
+if (!$this->secretStore->store($restaurantId, $finalSecret)) {
+    return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
+}
 
-        return new JsonResponse(['ok' => true]);
+return new JsonResponse(['ok' => true]);
     }
 
     // ========================================================================
