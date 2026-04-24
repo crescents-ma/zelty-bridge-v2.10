@@ -21,7 +21,6 @@ class WebhookVerifier
      * Adjust this if Zelty uses a different header name.
      * Common options: X-Zelty-Signature, X-Signature, X-Hub-Signature-256
      */
-    private const SIGNATURE_HEADER = 'X-Zelty-Signature';
 
     public function __construct(
         readonly private MerchantSecretStore $secretStore,
@@ -35,25 +34,46 @@ class WebhookVerifier
      * @param string  $restaurantId The restaurant_id from the webhook payload
      * @return bool true if signature is valid and matches the stored secret
      */
-    public function verify(Request $request, string $restaurantId): bool
-    {
-        $providedSignature = $request->headers->get(self::SIGNATURE_HEADER);
-        if (!$providedSignature) {
-            return false;
-        }
+public function verify(Request $request, string $restaurantId): bool
+{
+    $providedSignature = $this->extractSignature($request);
 
-        $secret = $this->secretStore->get($restaurantId);
-        if (!$secret) {
-            return false;
-        }
-
-        $rawBody = $request->getContent();
-        $expected = hash_hmac('sha256', $rawBody, $secret);
-
-        // Strip any prefix like "sha256=" that some vendors include
-        $provided = preg_replace('/^sha256=/', '', $providedSignature);
-
-        // Constant-time comparison to prevent timing attacks
-        return hash_equals($expected, $provided);
+    if (!$providedSignature) {
+        return false;
     }
+
+    $secret = $this->secretStore->get($restaurantId);
+    if (!$secret) {
+        return false;
+    }
+
+    $rawBody = $request->getContent();
+    $expected = hash_hmac('sha256', $rawBody, $secret);
+
+    $provided = preg_replace('/^sha256=/', '', $providedSignature);
+
+    return hash_equals($expected, $provided);
+}
+
+private function extractSignature(Request $request): ?string
+{
+    foreach ([
+        'X-Zelty-Signature',
+        'X-Signature',
+        'X-Hub-Signature-256',
+    ] as $header) {
+        $value = $request->headers->get($header);
+        if ($value) {
+            return $value;
+        }
+    }
+
+    foreach ($request->headers->all() as $name => $values) {
+        if (str_contains(strtolower($name), 'signature') && !empty($values[0])) {
+            return $values[0];
+        }
+    }
+
+    return null;
+}
 }
