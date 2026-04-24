@@ -31,8 +31,6 @@ class AppController
     use SerializerAwareTrait;
 
     private const DEFAULT_CURRENCY = 'MAD';
-
-    /** Reject request bodies larger than this to prevent resource abuse. */
     private const MAX_PAYLOAD_SIZE = 262144; // 256 KB
 
     private string $publicBaseUrl;
@@ -118,12 +116,12 @@ class AppController
         }
 
         if (!$this->webhookVerifier->verify($request, $restaurantId)) {
-            $this->logger->warning('[zelty_app] invalid webhook signature', [
+            $this->logger->warning('[zelty_app] invalid webhook token', [
                 'restaurant_id' => $restaurantId,
                 'event_id' => $eventId,
             ]);
 
-            return new JsonResponse(['error' => 'Invalid signature'], 401);
+            return new JsonResponse(['error' => 'Invalid token'], 401);
         }
 
         if (!$this->idempotencyStore->markProcessed($eventId)) {
@@ -380,78 +378,74 @@ class AppController
         return new JsonResponse($responseContent, json: true);
     }
 
-#[Route('/postback', methods: 'POST')]
-public function postback(Request $request): JsonResponse
-{
-    if (strlen($request->getContent()) > self::MAX_PAYLOAD_SIZE) {
-        return new JsonResponse(['error' => 'Payload too large'], 413);
-    }
-
-    try {
-        $payload = $request->toArray();
-    } catch (\Exception) {
-        return new JsonResponse(['ok' => false, 'error' => 'Invalid JSON'], 400);
-    }
-
-    $this->logger->info('[zelty_app] postback');
-
-    $apiKey = null;
-    $restaurantId = null;
-
-    foreach ($payload['credentials'] ?? [] as $cred) {
-        if (($cred['name'] ?? '') === 'zelty_api_key') {
-            $apiKey = $cred['value'] ?? null;
+    #[Route('/postback', methods: 'POST')]
+    public function postback(Request $request): JsonResponse
+    {
+        if (strlen($request->getContent()) > self::MAX_PAYLOAD_SIZE) {
+            return new JsonResponse(['error' => 'Payload too large'], 413);
         }
-        if (($cred['name'] ?? '') === 'zelty_restaurant_id') {
-            $restaurantId = $cred['value'] ?? null;
+
+        try {
+            $payload = $request->toArray();
+        } catch (\Exception) {
+            return new JsonResponse(['ok' => false, 'error' => 'Invalid JSON'], 400);
         }
+
+        $this->logger->info('[zelty_app] postback');
+
+        $apiKey = null;
+        $restaurantId = null;
+
+        foreach ($payload['credentials'] ?? [] as $cred) {
+            if (($cred['name'] ?? '') === 'zelty_api_key') {
+                $apiKey = $cred['value'] ?? null;
+            }
+            if (($cred['name'] ?? '') === 'zelty_restaurant_id') {
+                $restaurantId = $cred['value'] ?? null;
+            }
+        }
+
+        if (!$apiKey || !$restaurantId) {
+            return new JsonResponse([
+                'ok' => false,
+                'error' => 'Missing credentials',
+                'required' => ['zelty_api_key', 'zelty_restaurant_id'],
+            ], 400);
+        }
+
+        if ($this->publicBaseUrl === '' || !str_starts_with($this->publicBaseUrl, 'https://')) {
+            return new JsonResponse(['ok' => false, 'error' => 'APP_PUBLIC_URL must be a valid https URL'], 500);
+        }
+
+        $webhookToken = bin2hex(random_bytes(32));
+        $webhookTarget = $this->publicBaseUrl . '/on-order?token=' . urlencode($webhookToken);
+
+        $registrationSecret = bin2hex(random_bytes(32));
+
+        $result = $this->zeltyClient->upsertWebhooks($apiKey, [
+            'order.ended' => [
+                'target' => $webhookTarget,
+                'version' => 'v2',
+            ],
+            'order.status.update' => [
+                'target' => $webhookTarget,
+                'version' => 'v2',
+            ],
+        ], $registrationSecret);
+
+        if ($result === null) {
+            return new JsonResponse([
+                'ok' => false,
+                'error' => 'Webhook registration failed',
+            ], 502);
+        }
+
+        if (!$this->secretStore->store($restaurantId, $webhookToken)) {
+            return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
+        }
+
+        return new JsonResponse(['ok' => true]);
     }
-
-if (!$apiKey || !$restaurantId) {
-    return new JsonResponse([
-        'ok' => false,
-        'error' => 'Missing credentials',
-        'required' => ['zelty_api_key', 'zelty_restaurant_id'],
-    ], 400);
-}
-
-    if ($this->publicBaseUrl === '' || !str_starts_with($this->publicBaseUrl, 'https://')) {
-        return new JsonResponse(['ok' => false, 'error' => 'APP_PUBLIC_URL must be a valid https URL'], 500);
-    }
-
-$webhookToken = bin2hex(random_bytes(32));
-$webhookTarget = $this->publicBaseUrl . '/on-order?token=' . urlencode($webhookToken);
-
-// Zelty still requires a secret_key for webhook registration, but we no longer
-// depend on its HMAC format for verification.
-$existingConfig = $this->zeltyClient->getWebhooks($apiKey);
-$registrationSecret = $existingConfig['secret_key'] ?? bin2hex(random_bytes(32));
-
-$result = $this->zeltyClient->upsertWebhooks($apiKey, [
-    'order.ended' => [
-        'target' => $webhookTarget,
-        'version' => 'v2',
-    ],
-    'order.status.update' => [
-        'target' => $webhookTarget,
-        'version' => 'v2',
-    ],
-], $registrationSecret);
-
-if ($result === null) {
-    return new JsonResponse([
-        'ok' => false,
-        'error' => 'Webhook registration failed',
-    ], 502);
-}
-
-if (!$this->secretStore->store($restaurantId, $webhookToken)) {
-    return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
-}
-
-return new JsonResponse(['ok' => true]);
-}
-
 
     private function getCredential(Request $request, string $name): ?string
     {
