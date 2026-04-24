@@ -419,39 +419,37 @@ if (!$apiKey || !$restaurantId) {
         return new JsonResponse(['ok' => false, 'error' => 'APP_PUBLIC_URL must be a valid https URL'], 500);
     }
 
-    $webhookTarget = $this->publicBaseUrl . '/on-order';
+$webhookToken = bin2hex(random_bytes(32));
+$webhookTarget = $this->publicBaseUrl . '/on-order?token=' . urlencode($webhookToken);
 
-    // Reuse Zelty's current secret if it already exists.
-    $existingConfig = $this->zeltyClient->getWebhooks($apiKey);
-    $secret = $existingConfig['secret_key'] ?? bin2hex(random_bytes(32));
+// Zelty still requires a secret_key for webhook registration, but we no longer
+// depend on its HMAC format for verification.
+$existingConfig = $this->zeltyClient->getWebhooks($apiKey);
+$registrationSecret = $existingConfig['secret_key'] ?? bin2hex(random_bytes(32));
 
-    $result = $this->zeltyClient->upsertWebhooks($apiKey, [
-        'order.ended' => [
-            'target' => $webhookTarget,
-            'version' => 'v2',
-        ],
-        'order.status.update' => [
-            'target' => $webhookTarget,
-            'version' => 'v2',
-        ],
-    ], $secret);
+$result = $this->zeltyClient->upsertWebhooks($apiKey, [
+    'order.ended' => [
+        'target' => $webhookTarget,
+        'version' => 'v2',
+    ],
+    'order.status.update' => [
+        'target' => $webhookTarget,
+        'version' => 'v2',
+    ],
+], $registrationSecret);
 
-    if ($result === null) {
-        return new JsonResponse([
-            'ok' => false,
-            'error' => 'Webhook registration failed',
-        ], 502);
-    }
+if ($result === null) {
+    return new JsonResponse([
+        'ok' => false,
+        'error' => 'Webhook registration failed',
+    ], 502);
+}
 
-    // After upsert, ask Zelty again for the active secret and store that exact one.
-    $confirmedConfig = $this->zeltyClient->getWebhooks($apiKey);
-    $finalSecret = $confirmedConfig['secret_key'] ?? $result['secret_key'] ?? $secret;
+if (!$this->secretStore->store($restaurantId, $webhookToken)) {
+    return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
+}
 
-    if (!$this->secretStore->store($restaurantId, $finalSecret)) {
-        return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
-    }
-
-    return new JsonResponse(['ok' => true]);
+return new JsonResponse(['ok' => true]);
 }
 
 
