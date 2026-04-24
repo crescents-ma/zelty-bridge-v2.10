@@ -12,7 +12,6 @@ use App\DTO\Response\InventoryItem;
 use App\DTO\ReverseInput;
 use App\DTO\Selection;
 use App\Service\IdempotencyStore;
-use App\Service\MerchantSecretStore;
 use App\Service\WebhookVerifier;
 use App\Traits\SerializerAwareTrait;
 use Psr\Log\LoggerInterface;
@@ -38,7 +37,6 @@ class AppController
     public function __construct(
         readonly private ZeltyClient $zeltyClient,
         readonly private MarketplaceClient $marketplaceClient,
-        readonly private MerchantSecretStore $secretStore,
         readonly private IdempotencyStore $idempotencyStore,
         readonly private WebhookVerifier $webhookVerifier,
         readonly private LoggerInterface $logger,
@@ -417,8 +415,7 @@ public function health(): JsonResponse
             return new JsonResponse(['ok' => false, 'error' => 'APP_PUBLIC_URL must be a valid https URL'], 500);
         }
 
-$webhookToken = bin2hex(random_bytes(32));
-$webhookTarget = $this->publicBaseUrl . '/on-order?token=' . urlencode($webhookToken);
+$webhookTarget = $this->publicBaseUrl . '/on-order';
 
 $existingConfig = $this->zeltyClient->getWebhooks($apiKey);
 $currentSecretKey = $existingConfig['secret_key'] ?? null;
@@ -441,20 +438,16 @@ $result = $this->zeltyClient->upsertWebhooks($apiKey, [
     ],
 ], $currentSecretKey);
 
-        if ($result === null) {
-            return new JsonResponse([
-                'ok' => false,
-                'error' => 'Webhook registration failed',
-            ], 502);
-        }
+if ($result === null) {
+    return new JsonResponse([
+        'ok' => false,
+        'error' => 'Webhook registration failed',
+    ], 502);
+}
 
-        if (!$this->secretStore->store($restaurantId, $webhookToken)) {
-            return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
-        }
 return new JsonResponse([
     'ok' => true,
     'registered_target' => $webhookTarget,
-    'used_secret_key' => $currentSecretKey,
 ]);
     }
 
