@@ -213,11 +213,11 @@ class AppController
 
         $result = $this->marketplaceClient->accrue($input);
 
-$this->logger->info('[zelty_app] marketplace accrue response', [
+$this->logger->info('[zelty_app] marketplace accrue response: ' . json_encode([
     'restaurant_id' => $restaurantId,
     'transaction_id' => (string) $data['id'],
     'response' => $result,
-]);
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
 if ($result === null) {
     throw new \RuntimeException('Marketplace accrue request failed');
@@ -225,7 +225,7 @@ if ($result === null) {
 
 $firstResult = $result['results'][0] ?? null;
 if (is_array($firstResult) && array_key_exists('isSuccess', $firstResult) && $firstResult['isSuccess'] === false) {
-    throw new \RuntimeException((string) ($firstResult['errorMessage'] ?? 'Marketplace accrue rejected'));
+    throw new \RuntimeException('Marketplace accrue rejected: ' . json_encode($firstResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
 return $result;
@@ -254,11 +254,11 @@ return $result;
 
         $result = $this->marketplaceClient->reverse($input);
 
-$this->logger->info('[zelty_app] marketplace reverse response', [
+$this->logger->info('[zelty_app] marketplace reverse response: ' . json_encode([
     'restaurant_id' => $restaurantId,
     'transaction_id' => $orderId,
     'response' => $result,
-]);
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
 if ($result === null) {
     throw new \RuntimeException('Marketplace reverse request failed');
@@ -266,7 +266,7 @@ if ($result === null) {
 
 $firstResult = $result['results'][0] ?? null;
 if (is_array($firstResult) && array_key_exists('isSuccess', $firstResult) && $firstResult['isSuccess'] === false) {
-    throw new \RuntimeException((string) ($firstResult['errorMessage'] ?? 'Marketplace reverse rejected'));
+    throw new \RuntimeException('Marketplace reverse rejected: ' . json_encode($firstResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
 return $result;
