@@ -29,6 +29,10 @@ services:
         arguments:
             $projectDir: '%kernel.project_dir%'
 
+    App\Service\MerchantCredentialStore:
+        arguments:
+            $projectDir: '%kernel.project_dir%'
+
     App\Service\IdempotencyStore:
         arguments:
             $projectDir: '%kernel.project_dir%'
