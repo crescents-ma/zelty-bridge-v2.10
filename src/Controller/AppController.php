@@ -11,6 +11,7 @@ use App\DTO\Response\GetInventoryResponse;
 use App\DTO\Response\InventoryItem;
 use App\DTO\ReverseInput;
 use App\DTO\Selection;
+use App\Service\MerchantCredentialStore;
 use App\Service\IdempotencyStore;
 use App\Service\WebhookVerifier;
 use App\Traits\SerializerAwareTrait;
@@ -37,6 +38,7 @@ class AppController
     public function __construct(
         readonly private ZeltyClient $zeltyClient,
         readonly private MarketplaceClient $marketplaceClient,
+        readonly private MerchantCredentialStore $credentialStore,
         readonly private IdempotencyStore $idempotencyStore,
         readonly private WebhookVerifier $webhookVerifier,
         readonly private LoggerInterface $logger,
@@ -53,11 +55,11 @@ class AppController
         }
     }
 
-#[Route('/health', methods: 'GET')]
-public function health(): JsonResponse
-{
-    return new JsonResponse(['ok' => true]);
-}
+    #[Route('/health', methods: 'GET')]
+    public function health(): JsonResponse
+    {
+        return new JsonResponse(['ok' => true]);
+    }
 
     #[Route('/', methods: 'GET')]
     #[Route('/index.php', methods: 'GET')]
@@ -164,6 +166,11 @@ public function health(): JsonResponse
 
     private function accrueOrder(array $data, string $restaurantId): ?array
     {
+        $apiKey = $this->credentialStore->get($restaurantId);
+        if (!$apiKey) {
+            throw new \RuntimeException(sprintf('No stored zelty_api_key for restaurant %s', $restaurantId));
+        }
+
         $customer = $data['customer'] ?? [];
         $contents = $data['contents'] ?? [];
 
@@ -195,6 +202,7 @@ public function health(): JsonResponse
         $input = (new AccrueInput())
             ->setTransactionId((string) $data['id'])
             ->setCredentials([
+                Credential::create('zelty_api_key', $apiKey),
                 Credential::create('zelty_restaurant_id', $restaurantId),
             ])
             ->setPhone($customer['phone'] ?? null)
@@ -208,6 +216,11 @@ public function health(): JsonResponse
 
     private function handleStatusUpdate(array $data, string $restaurantId): ?array
     {
+        $apiKey = $this->credentialStore->get($restaurantId);
+        if (!$apiKey) {
+            throw new \RuntimeException(sprintf('No stored zelty_api_key for restaurant %s', $restaurantId));
+        }
+
         $status = (string) ($data['status'] ?? '');
         $orderId = (string) ($data['id'] ?? '');
 
@@ -218,6 +231,7 @@ public function health(): JsonResponse
         $input = (new ReverseInput())
             ->setTransactionId($orderId)
             ->setCredentials([
+                Credential::create('zelty_api_key', $apiKey),
                 Credential::create('zelty_restaurant_id', $restaurantId),
             ]);
 
@@ -238,11 +252,7 @@ public function health(): JsonResponse
         }
 
         try {
-            $apiKey = $this->marketplaceClient->resolveCredential(
-                'zelty_api_key',
-                'zelty_restaurant_id',
-                $restaurantId,
-            );
+            $apiKey = $this->credentialStore->get($restaurantId);
 
             if ($apiKey) {
                 $this->zeltyClient->addLoyaltyPoints($apiKey, $customerId, (int) $pointsAwarded);
@@ -415,40 +425,47 @@ public function health(): JsonResponse
             return new JsonResponse(['ok' => false, 'error' => 'APP_PUBLIC_URL must be a valid https URL'], 500);
         }
 
-$webhookTarget = $this->publicBaseUrl . '/on-order';
+        $webhookTarget = $this->publicBaseUrl . '/on-order';
 
-$existingConfig = $this->zeltyClient->getWebhooks($apiKey);
-$currentSecretKey = $existingConfig['secret_key'] ?? null;
+        $existingConfig = $this->zeltyClient->getWebhooks($apiKey);
+        $currentSecretKey = $existingConfig['secret_key'] ?? null;
 
-if (!$currentSecretKey) {
-    return new JsonResponse([
-        'ok' => false,
-        'error' => 'Could not read existing Zelty secret_key',
-    ], 500);
-}
+        if (!$currentSecretKey) {
+            return new JsonResponse([
+                'ok' => false,
+                'error' => 'Could not read existing Zelty secret_key',
+            ], 500);
+        }
 
-$result = $this->zeltyClient->upsertWebhooks($apiKey, [
-    'order.ended' => [
-        'target' => $webhookTarget,
-        'version' => 'v2',
-    ],
-    'order.status.update' => [
-        'target' => $webhookTarget,
-        'version' => 'v2',
-    ],
-], $currentSecretKey);
+        $result = $this->zeltyClient->upsertWebhooks($apiKey, [
+            'order.ended' => [
+                'target' => $webhookTarget,
+                'version' => 'v2',
+            ],
+            'order.status.update' => [
+                'target' => $webhookTarget,
+                'version' => 'v2',
+            ],
+        ], $currentSecretKey);
 
-if ($result === null) {
-    return new JsonResponse([
-        'ok' => false,
-        'error' => 'Webhook registration failed',
-    ], 502);
-}
+        if ($result === null) {
+            return new JsonResponse([
+                'ok' => false,
+                'error' => 'Webhook registration failed',
+            ], 502);
+        }
 
-return new JsonResponse([
-    'ok' => true,
-    'registered_target' => $webhookTarget,
-]);
+        if (!$this->credentialStore->store($restaurantId, $apiKey)) {
+            return new JsonResponse([
+                'ok' => false,
+                'error' => 'Could not store merchant credentials',
+            ], 500);
+        }
+
+        return new JsonResponse([
+            'ok' => true,
+            'registered_target' => $webhookTarget,
+        ]);
     }
 
     private function getCredential(Request $request, string $name): ?string
