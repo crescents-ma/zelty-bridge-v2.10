@@ -451,10 +451,11 @@ $result = $this->zeltyClient->upsertWebhooks($apiKey, [
         if (!$this->secretStore->store($restaurantId, $webhookToken)) {
             return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
         }
-            return new JsonResponse([
-                'ok' => true,
-                'registered_target' => $webhookTarget,
-            ]);
+return new JsonResponse([
+    'ok' => true,
+    'registered_target' => $webhookTarget,
+    'used_secret_key' => $currentSecretKey,
+]);
     }
 
     private function getCredential(Request $request, string $name): ?string
