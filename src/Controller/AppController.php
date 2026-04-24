@@ -407,16 +407,13 @@ public function postback(Request $request): JsonResponse
         }
     }
 
-    if ($apiKey && !$restaurantId) {
-        $restaurants = $this->zeltyClient->getRestaurants($apiKey);
-        if (is_array($restaurants) && !empty($restaurants)) {
-            $restaurantId = (string) ($restaurants[0]['id'] ?? '');
-        }
-    }
-
-    if (!$apiKey || !$restaurantId) {
-        return new JsonResponse(['ok' => false, 'error' => 'Missing credentials'], 400);
-    }
+if (!$apiKey || !$restaurantId) {
+    return new JsonResponse([
+        'ok' => false,
+        'error' => 'Missing credentials',
+        'required' => ['zelty_api_key', 'zelty_restaurant_id'],
+    ], 400);
+}
 
     if ($this->publicBaseUrl === '' || !str_starts_with($this->publicBaseUrl, 'https://')) {
         return new JsonResponse(['ok' => false, 'error' => 'APP_PUBLIC_URL must be a valid https URL'], 500);
