@@ -30,7 +30,7 @@ class AppController
 {
     use SerializerAwareTrait;
 
-    private const DEFAULT_CURRENCY = 'MAD';
+    private const DEFAULT_CURRENCY = 'EUR';
     private const MAX_PAYLOAD_SIZE = 262144; // 256 KB
 
     private string $publicBaseUrl;
@@ -196,7 +196,7 @@ class AppController
 
         $check = (new Check())
             ->setAmount($totalCents)
-            ->setCurrency(self::DEFAULT_CURRENCY)
+            ->setCurrency($this->resolveCurrency($data))
             ->setSelections($selections);
 
         $input = (new AccrueInput())
@@ -503,6 +503,25 @@ return $result;
         ]);
     }
 
+    private function resolveCurrency(array $data): string
+    {
+        $candidates = [
+            $data['currency'] ?? null,
+            $data['price_currency'] ?? null,
+            $data['price']['currency'] ?? null,
+            $data['price']['currency_code'] ?? null,
+            $data['total']['currency'] ?? null,
+        ];
+
+        foreach ($candidates as $currency) {
+            if (is_string($currency) && preg_match('/^[A-Za-z]{3}$/', $currency)) {
+                return strtoupper($currency);
+            }
+        }
+
+        return self::DEFAULT_CURRENCY;
+    }
+    
     private function getCredential(Request $request, string $name): ?string
     {
         try {
