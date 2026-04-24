@@ -417,21 +417,29 @@ public function health(): JsonResponse
             return new JsonResponse(['ok' => false, 'error' => 'APP_PUBLIC_URL must be a valid https URL'], 500);
         }
 
-        $webhookToken = bin2hex(random_bytes(32));
-        $webhookTarget = $this->publicBaseUrl . '/on-order?token=' . urlencode($webhookToken);
+$webhookToken = bin2hex(random_bytes(32));
+$webhookTarget = $this->publicBaseUrl . '/on-order?token=' . urlencode($webhookToken);
 
-        $registrationSecret = bin2hex(random_bytes(32));
+$existingConfig = $this->zeltyClient->getWebhooks($apiKey);
+$currentSecretKey = $existingConfig['secret_key'] ?? null;
 
-        $result = $this->zeltyClient->upsertWebhooks($apiKey, [
-            'order.ended' => [
-                'target' => $webhookTarget,
-                'version' => 'v2',
-            ],
-            'order.status.update' => [
-                'target' => $webhookTarget,
-                'version' => 'v2',
-            ],
-        ], $registrationSecret);
+if (!$currentSecretKey) {
+    return new JsonResponse([
+        'ok' => false,
+        'error' => 'Could not read existing Zelty secret_key',
+    ], 500);
+}
+
+$result = $this->zeltyClient->upsertWebhooks($apiKey, [
+    'order.ended' => [
+        'target' => $webhookTarget,
+        'version' => 'v2',
+    ],
+    'order.status.update' => [
+        'target' => $webhookTarget,
+        'version' => 'v2',
+    ],
+], $currentSecretKey);
 
         if ($result === null) {
             return new JsonResponse([
