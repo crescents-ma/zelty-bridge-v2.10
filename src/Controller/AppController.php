@@ -55,14 +55,11 @@ class AppController
         }
     }
 
-    #[Route('/health', methods: 'GET')]
-    public function health(): JsonResponse
-    {
-        return new JsonResponse([
-    'ok' => true,
-    'registered_target' => $webhookTarget,
-]);
-    }
+#[Route('/health', methods: 'GET')]
+public function health(): JsonResponse
+{
+    return new JsonResponse(['ok' => true]);
+}
 
     #[Route('/', methods: 'GET')]
     #[Route('/index.php', methods: 'GET')]
@@ -446,8 +443,10 @@ class AppController
         if (!$this->secretStore->store($restaurantId, $webhookToken)) {
             return new JsonResponse(['ok' => false, 'error' => 'Could not store secret'], 500);
         }
-
-        return new JsonResponse(['ok' => true]);
+            return new JsonResponse([
+                'ok' => true,
+                'registered_target' => $webhookTarget,
+            ]);
     }
 
     private function getCredential(Request $request, string $name): ?string
