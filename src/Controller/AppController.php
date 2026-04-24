@@ -211,7 +211,24 @@ class AppController
             ->setLastName($customer['name'] ?? null)
             ->setCheck($check);
 
-        return $this->marketplaceClient->accrue($input);
+        $result = $this->marketplaceClient->accrue($input);
+
+$this->logger->info('[zelty_app] marketplace accrue response', [
+    'restaurant_id' => $restaurantId,
+    'transaction_id' => (string) $data['id'],
+    'response' => $result,
+]);
+
+if ($result === null) {
+    throw new \RuntimeException('Marketplace accrue request failed');
+}
+
+$firstResult = $result['results'][0] ?? null;
+if (is_array($firstResult) && array_key_exists('isSuccess', $firstResult) && $firstResult['isSuccess'] === false) {
+    throw new \RuntimeException((string) ($firstResult['errorMessage'] ?? 'Marketplace accrue rejected'));
+}
+
+return $result;
     }
 
     private function handleStatusUpdate(array $data, string $restaurantId): ?array
@@ -235,7 +252,25 @@ class AppController
                 Credential::create('zelty_restaurant_id', $restaurantId),
             ]);
 
-        return $this->marketplaceClient->reverse($input);
+        $result = $this->marketplaceClient->reverse($input);
+
+$this->logger->info('[zelty_app] marketplace reverse response', [
+    'restaurant_id' => $restaurantId,
+    'transaction_id' => $orderId,
+    'response' => $result,
+]);
+
+if ($result === null) {
+    throw new \RuntimeException('Marketplace reverse request failed');
+}
+
+$firstResult = $result['results'][0] ?? null;
+if (is_array($firstResult) && array_key_exists('isSuccess', $firstResult) && $firstResult['isSuccess'] === false) {
+    throw new \RuntimeException((string) ($firstResult['errorMessage'] ?? 'Marketplace reverse rejected'));
+}
+
+return $result;
+
     }
 
     private function trySyncPointsToZelty(array $data, string $restaurantId, ?array $result): void
