@@ -65,7 +65,7 @@ class AppController
         return new JsonResponse(['ok' => true]);
     }
 
-       #[Route('/', methods: 'GET')]
+    #[Route('/', methods: 'GET')]
     #[Route('/index.php', methods: 'GET')]
     public function home(): JsonResponse
     {
@@ -125,14 +125,13 @@ class AppController
         }
 
         // 3. Verify webhook signature — CRITICAL to prevent spoofing
-if (!$this->webhookVerifier->verify($request, $restaurantId)) {
-    $this->logger->warning('[zelty_app] invalid webhook signature - temporarily bypassed', [
-        'restaurant_id' => $restaurantId,
-        'event_id' => $eventId,
-        'headers' => $request->headers->all(),
-    ]);
-    // TEMPORARY: allow webhook through so we can confirm the rest of the flow works
-}
+        if (!$this->webhookVerifier->verify($request, $restaurantId)) {
+            $this->logger->warning('[zelty_app] invalid webhook signature', [
+                'restaurant_id' => $restaurantId,
+                'event_id' => $eventId,
+            ]);
+            return new JsonResponse(['error' => 'Invalid signature'], 401);
+        }
 
         // 4. Idempotency — skip if we've already processed this event
         if (!$this->idempotencyStore->markProcessed($eventId)) {
