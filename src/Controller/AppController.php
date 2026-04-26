@@ -317,109 +317,53 @@ return $result;
     }
 
     #[Route('/get-inventory', methods: 'POST')]
-    public function getInventory(Request $request): JsonResponse
-    {
-        if (strlen($request->getContent()) > self::MAX_PAYLOAD_SIZE) {
-            return new JsonResponse(['error' => 'Payload too large'], 413);
-        }
-
-        $this->logger->info('[zelty_app] get-inventory');
-
-        $apiKey = $this->getCredential($request, 'zelty_api_key');
-        if (!$apiKey) {
-            throw new AccessDeniedHttpException('Missing zelty_api_key credential');
-        }
-
-        $tags = $this->zeltyClient->getTags($apiKey, showAll: true, allRestaurants: true);
-        $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true, allRestaurants: true);
-
-        if ($tags === null || $dishes === null) {
-            throw new \RuntimeException('Could not fetch Zelty catalog');
-        }
-
-        $dishesByTag = [];
-        foreach ($dishes as $dish) {
-            foreach ($dish['tags'] ?? [] as $tagId) {
-                $dishesByTag[$tagId][] = $dish;
-            }
-        }
-
-        $items = [];
-        $itemsById = [];
-
-        foreach ($tags as $tag) {
-            $tagId = $tag['id'] ?? null;
-            if ($tagId === null) {
-                continue;
-            }
-
-            $parentId = (int) ($tag['id_parent'] ?? 0);
-            if ($parentId !== 0) {
-                continue;
-            }
-
-            $tagDishes = $dishesByTag[$tagId] ?? [];
-            $inventoryItem = (new InventoryItem())
-                ->setType(InventoryItem::TYPE_GROUP)
-                ->setId((string) $tagId)
-                ->setTitle((string) ($tag['name'] ?? 'Unnamed category'))
-                ->setItems(
-                    array_map(
-                        fn(array $dish) => (new InventoryItem())
-                            ->setType(InventoryItem::TYPE_ITEM)
-                            ->setId((string) ($dish['id'] ?? ''))
-                            ->setTitle((string) ($dish['name'] ?? 'Unnamed dish')),
-                        $tagDishes,
-                    ) ?: null
-                );
-
-            $items[] = $inventoryItem;
-            $itemsById[(string) $tagId] = $inventoryItem;
-        }
-
-        foreach ($tags as $tag) {
-            $tagId = $tag['id'] ?? null;
-            if ($tagId === null) {
-                continue;
-            }
-
-            $parentId = (int) ($tag['id_parent'] ?? 0);
-            if ($parentId === 0) {
-                continue;
-            }
-
-            $parentItem = $itemsById[(string) $parentId] ?? null;
-            if (!$parentItem) {
-                continue;
-            }
-
-            $subDishes = $dishesByTag[$tagId] ?? [];
-            $subGroup = (new InventoryItem())
-                ->setType(InventoryItem::TYPE_GROUP)
-                ->setId((string) $tagId)
-                ->setTitle((string) ($tag['name'] ?? 'Unnamed subcategory'))
-                ->setItems(
-                    array_map(
-                        fn(array $dish) => (new InventoryItem())
-                            ->setType(InventoryItem::TYPE_ITEM)
-                            ->setId((string) ($dish['id'] ?? ''))
-                            ->setTitle((string) ($dish['name'] ?? 'Unnamed dish')),
-                        $subDishes,
-                    ) ?: null
-                );
-
-            $existing = $parentItem->getItems() ?? [];
-            $existing[] = $subGroup;
-            $parentItem->setItems($existing);
-        }
-
-        $response = (new GetInventoryResponse())->setInventoryItems($items);
-        $responseContent = $this->getSerializer()->serialize($response, JsonEncoder::FORMAT, [
-            AbstractObjectNormalizer::SKIP_NULL_VALUES => true,
-        ]);
-
-        return new JsonResponse($responseContent, json: true);
+public function getInventory(Request $request): JsonResponse
+{
+    if (strlen($request->getContent()) > self::MAX_PAYLOAD_SIZE) {
+        return new JsonResponse(['error' => 'Payload too large'], 413);
     }
+
+    $this->logger->info('[zelty_app] get-inventory');
+
+    $apiKey = $this->getCredential($request, 'zelty_api_key');
+    if (!$apiKey) {
+        throw new AccessDeniedHttpException('Missing zelty_api_key credential');
+    }
+
+    // Use only the connected merchant catalog. TRYB can break on merged
+    // multi-restaurant trees.
+    $tags = $this->zeltyClient->getTags($apiKey, showAll: true);
+    $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true);
+
+    if ($tags === null || $dishes === null) {
+        throw new \RuntimeException('Could not fetch Zelty catalog');
+    }
+
+    $tagsByParent = [];
+    foreach ($tags as $tag) {
+        $parentId = (int) ($tag['id_parent'] ?? 0);
+        $tagsByParent[$parentId][] = $tag;
+    }
+
+    $dishesByTag = [];
+    foreach ($dishes as $dish) {
+        foreach ($dish['tags'] ?? [] as $tagId) {
+            $dishesByTag[(string) $tagId][] = $dish;
+        }
+    }
+
+    $items = [];
+    foreach ($tagsByParent[0] ?? [] as $rootTag) {
+        $items[] = $this->buildInventoryGroup($rootTag, $tagsByParent, $dishesByTag);
+    }
+
+    $response = (new GetInventoryResponse())->setInventoryItems($items);
+    $responseContent = $this->getSerializer()->serialize($response, JsonEncoder::FORMAT, [
+        AbstractObjectNormalizer::SKIP_NULL_VALUES => true,
+    ]);
+
+    return new JsonResponse($responseContent, json: true);
+}
 
     #[Route('/postback', methods: 'POST')]
     public function postback(Request $request): JsonResponse
@@ -502,6 +446,63 @@ return $result;
             'registered_target' => $webhookTarget,
         ]);
     }
+
+private function buildInventoryGroup(array $tag, array $tagsByParent, array $dishesByTag): InventoryItem
+{
+    $tagId = (string) ($tag['id'] ?? '');
+    $childGroups = [];
+
+    foreach ($tagsByParent[(int) ($tag['id'] ?? 0)] ?? [] as $childTag) {
+        $childGroups[] = $this->buildInventoryGroup($childTag, $tagsByParent, $dishesByTag);
+    }
+
+    $directItems = $this->buildInventoryItems($dishesByTag[$tagId] ?? []);
+
+    // Keep the tree shape stable for TRYB:
+    // groups always return an array in `items`, and if a category has both
+    // subcategories and direct dishes, wrap the dishes in a synthetic subgroup
+    // instead of mixing item/group siblings.
+    $items = $childGroups;
+    if ($directItems !== []) {
+        if ($childGroups !== []) {
+            $items[] = (new InventoryItem())
+                ->setType(InventoryItem::TYPE_GROUP)
+                ->setId($tagId . '__items')
+                ->setTitle('Items')
+                ->setItems($directItems);
+        } else {
+            $items = $directItems;
+        }
+    }
+
+    return (new InventoryItem())
+        ->setType(InventoryItem::TYPE_GROUP)
+        ->setId($tagId)
+        ->setTitle((string) ($tag['name'] ?? 'Unnamed category'))
+        ->setItems($items);
+}
+
+private function buildInventoryItems(array $dishes): array
+{
+    $items = [];
+    $seen = [];
+
+    foreach ($dishes as $dish) {
+        $dishId = (string) ($dish['id'] ?? '');
+        if ($dishId === '' || isset($seen[$dishId])) {
+            continue;
+        }
+
+        $seen[$dishId] = true;
+        $items[] = (new InventoryItem())
+            ->setType(InventoryItem::TYPE_ITEM)
+            ->setId($dishId)
+            ->setTitle((string) ($dish['name'] ?? 'Unnamed dish'));
+    }
+
+    return $items;
+}
+
 
     private function resolveCurrency(array $data): string
     {
