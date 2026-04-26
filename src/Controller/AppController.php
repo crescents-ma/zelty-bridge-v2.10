@@ -171,6 +171,8 @@ class AppController
             throw new \RuntimeException(sprintf('No stored zelty_api_key for restaurant %s', $restaurantId));
         }
 
+        $dishGroupMap = $this->buildDishGroupMap($apiKey);
+        
         $customer = $data['customer'] ?? [];
         $contents = $data['contents'] ?? [];
 
@@ -186,7 +188,7 @@ class AppController
             $selections[] = (new Selection())
                 ->setId((string) ($item['item_id'] ?? $item['id'] ?? ''))
                 ->setDisplayName((string) ($item['name'] ?? 'Unknown item'))
-                ->setGroupId(null)
+                ->setGroupId($this->resolveSelectionGroupId($item, $dishGroupMap))
                 ->setPrice($itemPrice)
                 ->setTotalPrice($itemPrice)
                 ->setQuantity(max(1, (int) ($item['quantity'] ?? 1)));
@@ -503,6 +505,47 @@ private function buildInventoryItems(array $dishes): array
     return $items;
 }
 
+private function buildDishGroupMap(string $apiKey): array
+{
+    $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true);
+    if (!is_array($dishes)) {
+        return [];
+    }
+
+    $map = [];
+    foreach ($dishes as $dish) {
+        $dishId = (string) ($dish['id'] ?? '');
+        if ($dishId === '') {
+            continue;
+        }
+
+        $tags = [];
+        foreach ($dish['tags'] ?? [] as $tagId) {
+            if (is_scalar($tagId) && (string) $tagId !== '') {
+                $tags[] = (string) $tagId;
+            }
+        }
+
+        if ($tags !== []) {
+            $map[$dishId] = $tags[0];
+        }
+    }
+
+    return $map;
+}
+
+private function resolveSelectionGroupId(array $item, array $dishGroupMap): ?string
+{
+    foreach ($item['tags'] ?? [] as $tagId) {
+        if (is_scalar($tagId) && (string) $tagId !== '') {
+            return (string) $tagId;
+        }
+    }
+
+    $dishId = (string) ($item['item_id'] ?? $item['id'] ?? '');
+
+    return $dishGroupMap[$dishId] ?? null;
+}
 
     private function resolveCurrency(array $data): string
     {
