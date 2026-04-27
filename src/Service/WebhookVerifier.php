@@ -21,7 +21,7 @@ class WebhookVerifier
         $merchantSecret = $this->secretStore->get($restaurantId);
         $secret = $merchantSecret ?: $this->globalSecret;
 
-        $this->logger->info('[webhook_verifier] secret source', [
+        $this->logger->error('[webhook_verifier] secret source', [
             'restaurant_id' => $restaurantId,
             'has_merchant_secret' => $merchantSecret !== null && $merchantSecret !== '',
             'has_global_secret' => $this->globalSecret !== '',
@@ -29,7 +29,7 @@ class WebhookVerifier
         ]);
 
         if ($secret === '') {
-            $this->logger->warning('[webhook_verifier] missing secret', [
+            $this->logger->error('[webhook_verifier] missing secret', [
                 'restaurant_id' => $restaurantId,
             ]);
             return false;
@@ -37,7 +37,7 @@ class WebhookVerifier
 
         $providedSignature = $this->extractSignature($request);
 
-        $this->logger->info('[webhook_verifier] signature presence', [
+        $this->logger->error('[webhook_verifier] signature presence', [
             'restaurant_id' => $restaurantId,
             'has_signature' => (bool) $providedSignature,
         ]);
@@ -52,7 +52,7 @@ class WebhookVerifier
 
         $isValid = hash_equals($expected, $provided);
 
-        $this->logger->info('[webhook_verifier] verification result', [
+        $this->logger->error('[webhook_verifier] verification result', [
             'restaurant_id' => $restaurantId,
             'valid' => $isValid,
             'expected_prefix' => substr($expected, 0, 12),
@@ -72,7 +72,7 @@ class WebhookVerifier
         ] as $header) {
             $value = $request->headers->get($header);
             if ($value) {
-                $this->logger->info('[webhook_verifier] signature header found', [
+                $this->logger->error('[webhook_verifier] signature header found', [
                     'header' => $header,
                 ]);
                 return $value;
@@ -81,7 +81,7 @@ class WebhookVerifier
 
         foreach ($request->headers->all() as $name => $values) {
             if ((str_contains(strtolower($name), 'signature') || str_contains(strtolower($name), 'hmac')) && !empty($values[0])) {
-                $this->logger->info('[webhook_verifier] signature header found by scan', [
+                $this->logger->error('[webhook_verifier] signature header found by scan', [
                     'header' => $name,
                 ]);
                 return $values[0];
