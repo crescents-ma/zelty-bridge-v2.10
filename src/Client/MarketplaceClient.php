@@ -44,13 +44,15 @@ class MarketplaceClient
                 ->setCredentials([Credential::create($fromName, $fromValue)])
         );
 
-        return $output->getCredentialValue($name);
-
+        return $output?->getCredentialValue($name);
     }
 
     public function resolveCredentials(ResolveCredentialsInput $input): ?ResolveCredentialsOutput
     {
         $result = $this->post('/resolve-credentials', $input, cacheTtl: $this->resolveCredentialsCacheTtl);
+        if ($result === null) {
+            return null;
+        }
 
         return $this->getSerializer()->denormalize($result, ResolveCredentialsOutput::class, JsonEncoder::FORMAT);
     }
@@ -80,8 +82,7 @@ class MarketplaceClient
         string $path,
         object|array|null $request = null,
         ?int $cacheTtl = null
-    ): ?array
-    {
+    ): ?array {
         $url = $this->baseUrl . $path;
         $options = [
             'headers' => [
@@ -100,8 +101,8 @@ class MarketplaceClient
             $doRequest = function () use ($method, $url, $options, $requestBody) {
                 $response = $this->httpClient->request($method, $url, $options);
                 $this->debug(sprintf('Request %s %s', $method, $url), [
-                    'request_body' => $requestBody,
-                    'response' => $response,
+                    'has_request_body' => $requestBody !== '',
+                    'status_code' => $response->getStatusCode(),
                 ]);
 
                 return $response->getContent();
@@ -110,7 +111,7 @@ class MarketplaceClient
             $responseContent = $cacheTtl
                 ? $this->cache->get(
                     $this->buildCacheKey($method, $url, $requestBody),
-                    function(ItemInterface $item) use ($doRequest, $cacheTtl) {
+                    function (ItemInterface $item) use ($doRequest, $cacheTtl) {
                         $item->expiresAfter($cacheTtl);
                         return $doRequest();
                     }
@@ -118,16 +119,21 @@ class MarketplaceClient
                 : $doRequest();
 
             return json_decode($responseContent, true, flags: JSON_THROW_ON_ERROR);
-
         } catch (\Exception $e) {
             if ($e instanceof HttpExceptionInterface) {
                 $this->debug(sprintf('Request %s %s Error', $method, $url), [
-                    'request_body' => $requestBody,
-                    'response' => $e->getResponse(),
+                    'has_request_body' => $requestBody !== '',
+                    'status_code' => $e->getResponse()->getStatusCode(),
+                    'response_body' => $this->truncate($e->getResponse()->getContent(false)),
                 ]);
             } else {
-                $this->logger->error($e);
+                $this->logger->error('[marketplace_client] unexpected error', [
+                    'method' => $method,
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
             }
+
             return null;
         }
     }
@@ -140,5 +146,12 @@ class MarketplaceClient
     public function debug(string $message, array $context = []): void
     {
         $this->logger->info(sprintf('[marketplace_client] %s', $message), $context);
+    }
+
+    private function truncate(string $value, int $maxLength = 500): string
+    {
+        return strlen($value) > $maxLength
+            ? substr($value, 0, $maxLength) . '...'
+            : $value;
     }
 }
