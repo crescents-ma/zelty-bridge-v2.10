@@ -13,6 +13,7 @@ use App\DTO\ReverseInput;
 use App\DTO\Selection;
 use App\Service\MerchantCredentialStore;
 use App\Service\IdempotencyStore;
+use App\Service\MerchantSecretStore;
 use App\Service\WebhookVerifier;
 use App\Traits\SerializerAwareTrait;
 use Psr\Log\LoggerInterface;
@@ -40,6 +41,7 @@ class AppController
         readonly private MarketplaceClient $marketplaceClient,
         readonly private MerchantCredentialStore $credentialStore,
         readonly private IdempotencyStore $idempotencyStore,
+        readonly private MerchantSecretStore $secretStore,
         readonly private WebhookVerifier $webhookVerifier,
         readonly private LoggerInterface $logger,
         ParameterBagInterface $params,
@@ -172,7 +174,6 @@ class AppController
         }
 
         $dishGroupMap = $this->buildDishGroupMap($apiKey);
-        
         $customer = $data['customer'] ?? [];
         $contents = $data['contents'] ?? [];
 
@@ -215,22 +216,23 @@ class AppController
 
         $result = $this->marketplaceClient->accrue($input);
 
-$this->logger->info('[zelty_app] marketplace accrue response: ' . json_encode([
-    'restaurant_id' => $restaurantId,
-    'transaction_id' => (string) $data['id'],
-    'response' => $result,
-], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $this->logger->info('[zelty_app] marketplace accrue response: ' . json_encode([
+            'restaurant_id' => $restaurantId,
+            'transaction_id' => (string) $data['id'],
+            'success' => $result['results'][0]['isSuccess'] ?? null,
+            'status' => $result['results'][0]['status'] ?? null,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-if ($result === null) {
-    throw new \RuntimeException('Marketplace accrue request failed');
-}
+        if ($result === null) {
+            throw new \RuntimeException('Marketplace accrue request failed');
+        }
 
-$firstResult = $result['results'][0] ?? null;
-if (is_array($firstResult) && array_key_exists('isSuccess', $firstResult) && $firstResult['isSuccess'] === false) {
-    throw new \RuntimeException('Marketplace accrue rejected: ' . json_encode($firstResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-}
+        $firstResult = $result['results'][0] ?? null;
+        if (is_array($firstResult) && array_key_exists('isSuccess', $firstResult) && $firstResult['isSuccess'] === false) {
+            throw new \RuntimeException('Marketplace accrue rejected: ' . (string) ($firstResult['errorMessage'] ?? 'Marketplace accrue rejected'));
+        }
 
-return $result;
+        return $result;
     }
 
     private function handleStatusUpdate(array $data, string $restaurantId): ?array
@@ -256,23 +258,23 @@ return $result;
 
         $result = $this->marketplaceClient->reverse($input);
 
-$this->logger->info('[zelty_app] marketplace reverse response: ' . json_encode([
-    'restaurant_id' => $restaurantId,
-    'transaction_id' => $orderId,
-    'response' => $result,
-], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $this->logger->info('[zelty_app] marketplace reverse response: ' . json_encode([
+            'restaurant_id' => $restaurantId,
+            'transaction_id' => $orderId,
+            'success' => $result['results'][0]['isSuccess'] ?? null,
+            'status' => $result['results'][0]['status'] ?? null,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-if ($result === null) {
-    throw new \RuntimeException('Marketplace reverse request failed');
-}
+        if ($result === null) {
+            throw new \RuntimeException('Marketplace reverse request failed');
+        }
 
-$firstResult = $result['results'][0] ?? null;
-if (is_array($firstResult) && array_key_exists('isSuccess', $firstResult) && $firstResult['isSuccess'] === false) {
-    throw new \RuntimeException('Marketplace reverse rejected: ' . json_encode($firstResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-}
+        $firstResult = $result['results'][0] ?? null;
+        if (is_array($firstResult) && array_key_exists('isSuccess', $firstResult) && $firstResult['isSuccess'] === false) {
+            throw new \RuntimeException('Marketplace reverse rejected: ' . (string) ($firstResult['errorMessage'] ?? 'Marketplace reverse rejected'));
+        }
 
-return $result;
-
+        return $result;
     }
 
     private function trySyncPointsToZelty(array $data, string $restaurantId, ?array $result): void
@@ -319,53 +321,51 @@ return $result;
     }
 
     #[Route('/get-inventory', methods: 'POST')]
-public function getInventory(Request $request): JsonResponse
-{
-    if (strlen($request->getContent()) > self::MAX_PAYLOAD_SIZE) {
-        return new JsonResponse(['error' => 'Payload too large'], 413);
-    }
-
-    $this->logger->info('[zelty_app] get-inventory');
-
-    $apiKey = $this->getCredential($request, 'zelty_api_key');
-    if (!$apiKey) {
-        throw new AccessDeniedHttpException('Missing zelty_api_key credential');
-    }
-
-    // Use only the connected merchant catalog. TRYB can break on merged
-    // multi-restaurant trees.
-    $tags = $this->zeltyClient->getTags($apiKey, showAll: true);
-    $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true);
-
-    if ($tags === null || $dishes === null) {
-        throw new \RuntimeException('Could not fetch Zelty catalog');
-    }
-
-    $tagsByParent = [];
-    foreach ($tags as $tag) {
-        $parentId = (int) ($tag['id_parent'] ?? 0);
-        $tagsByParent[$parentId][] = $tag;
-    }
-
-    $dishesByTag = [];
-    foreach ($dishes as $dish) {
-        foreach ($dish['tags'] ?? [] as $tagId) {
-            $dishesByTag[(string) $tagId][] = $dish;
+    public function getInventory(Request $request): JsonResponse
+    {
+        if (strlen($request->getContent()) > self::MAX_PAYLOAD_SIZE) {
+            return new JsonResponse(['error' => 'Payload too large'], 413);
         }
+
+        $this->logger->info('[zelty_app] get-inventory');
+
+        $apiKey = $this->getCredential($request, 'zelty_api_key');
+        if (!$apiKey) {
+            throw new AccessDeniedHttpException('Missing zelty_api_key credential');
+        }
+
+        $tags = $this->zeltyClient->getTags($apiKey, showAll: true);
+        $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true);
+
+        if ($tags === null || $dishes === null) {
+            throw new \RuntimeException('Could not fetch Zelty catalog');
+        }
+
+        $tagsByParent = [];
+        foreach ($tags as $tag) {
+            $parentId = (int) ($tag['id_parent'] ?? 0);
+            $tagsByParent[$parentId][] = $tag;
+        }
+
+        $dishesByTag = [];
+        foreach ($dishes as $dish) {
+            foreach ($dish['tags'] ?? [] as $tagId) {
+                $dishesByTag[(string) $tagId][] = $dish;
+            }
+        }
+
+        $items = [];
+        foreach ($tagsByParent[0] ?? [] as $rootTag) {
+            $items[] = $this->buildInventoryGroup($rootTag, $tagsByParent, $dishesByTag);
+        }
+
+        $response = (new GetInventoryResponse())->setInventoryItems($items);
+        $responseContent = $this->getSerializer()->serialize($response, JsonEncoder::FORMAT, [
+            AbstractObjectNormalizer::SKIP_NULL_VALUES => true,
+        ]);
+
+        return new JsonResponse($responseContent, json: true);
     }
-
-    $items = [];
-    foreach ($tagsByParent[0] ?? [] as $rootTag) {
-        $items[] = $this->buildInventoryGroup($rootTag, $tagsByParent, $dishesByTag);
-    }
-
-    $response = (new GetInventoryResponse())->setInventoryItems($items);
-    $responseContent = $this->getSerializer()->serialize($response, JsonEncoder::FORMAT, [
-        AbstractObjectNormalizer::SKIP_NULL_VALUES => true,
-    ]);
-
-    return new JsonResponse($responseContent, json: true);
-}
 
     #[Route('/postback', methods: 'POST')]
     public function postback(Request $request): JsonResponse
@@ -418,6 +418,13 @@ public function getInventory(Request $request): JsonResponse
             ], 500);
         }
 
+        if (!$this->apiKeyOwnsRestaurant($apiKey, $restaurantId)) {
+            return new JsonResponse([
+                'ok' => false,
+                'error' => 'Provided Zelty API key does not have access to the supplied restaurant_id',
+            ], 403);
+        }
+
         $result = $this->zeltyClient->upsertWebhooks($apiKey, [
             'order.ended' => [
                 'target' => $webhookTarget,
@@ -436,6 +443,13 @@ public function getInventory(Request $request): JsonResponse
             ], 502);
         }
 
+        if (!$this->secretStore->store($restaurantId, $currentSecretKey)) {
+            return new JsonResponse([
+                'ok' => false,
+                'error' => 'Could not store merchant webhook secret',
+            ], 500);
+        }
+
         if (!$this->credentialStore->store($restaurantId, $apiKey)) {
             return new JsonResponse([
                 'ok' => false,
@@ -449,103 +463,115 @@ public function getInventory(Request $request): JsonResponse
         ]);
     }
 
-private function buildInventoryGroup(array $tag, array $tagsByParent, array $dishesByTag): InventoryItem
-{
-    $tagId = (string) ($tag['id'] ?? '');
-    $childGroups = [];
+    private function buildInventoryGroup(array $tag, array $tagsByParent, array $dishesByTag): InventoryItem
+    {
+        $tagId = (string) ($tag['id'] ?? '');
+        $childGroups = [];
 
-    foreach ($tagsByParent[(int) ($tag['id'] ?? 0)] ?? [] as $childTag) {
-        $childGroups[] = $this->buildInventoryGroup($childTag, $tagsByParent, $dishesByTag);
-    }
-
-    $directItems = $this->buildInventoryItems($dishesByTag[$tagId] ?? []);
-
-    // Keep the tree shape stable for TRYB:
-    // groups always return an array in `items`, and if a category has both
-    // subcategories and direct dishes, wrap the dishes in a synthetic subgroup
-    // instead of mixing item/group siblings.
-    $items = $childGroups;
-    if ($directItems !== []) {
-        if ($childGroups !== []) {
-            $items[] = (new InventoryItem())
-                ->setType(InventoryItem::TYPE_GROUP)
-                ->setId($tagId . '__items')
-                ->setTitle('Items')
-                ->setItems($directItems);
-        } else {
-            $items = $directItems;
-        }
-    }
-
-    return (new InventoryItem())
-        ->setType(InventoryItem::TYPE_GROUP)
-        ->setId($tagId)
-        ->setTitle((string) ($tag['name'] ?? 'Unnamed category'))
-        ->setItems($items);
-}
-
-private function buildInventoryItems(array $dishes): array
-{
-    $items = [];
-    $seen = [];
-
-    foreach ($dishes as $dish) {
-        $dishId = (string) ($dish['id'] ?? '');
-        if ($dishId === '' || isset($seen[$dishId])) {
-            continue;
+        foreach ($tagsByParent[(int) ($tag['id'] ?? 0)] ?? [] as $childTag) {
+            $childGroups[] = $this->buildInventoryGroup($childTag, $tagsByParent, $dishesByTag);
         }
 
-        $seen[$dishId] = true;
-        $items[] = (new InventoryItem())
-            ->setType(InventoryItem::TYPE_ITEM)
-            ->setId($dishId)
-            ->setTitle((string) ($dish['name'] ?? 'Unnamed dish'));
-    }
+        $directItems = $this->buildInventoryItems($dishesByTag[$tagId] ?? []);
 
-    return $items;
-}
-
-private function buildDishGroupMap(string $apiKey): array
-{
-    $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true);
-    if (!is_array($dishes)) {
-        return [];
-    }
-
-    $map = [];
-    foreach ($dishes as $dish) {
-        $dishId = (string) ($dish['id'] ?? '');
-        if ($dishId === '') {
-            continue;
-        }
-
-        $tags = [];
-        foreach ($dish['tags'] ?? [] as $tagId) {
-            if (is_scalar($tagId) && (string) $tagId !== '') {
-                $tags[] = (string) $tagId;
+        $items = $childGroups;
+        if ($directItems !== []) {
+            if ($childGroups !== []) {
+                $items[] = (new InventoryItem())
+                    ->setType(InventoryItem::TYPE_GROUP)
+                    ->setId($tagId . '__items')
+                    ->setTitle('Items')
+                    ->setItems($directItems);
+            } else {
+                $items = $directItems;
             }
         }
 
-        if ($tags !== []) {
-            $map[$dishId] = $tags[0];
-        }
+        return (new InventoryItem())
+            ->setType(InventoryItem::TYPE_GROUP)
+            ->setId($tagId)
+            ->setTitle((string) ($tag['name'] ?? 'Unnamed category'))
+            ->setItems($items);
     }
 
-    return $map;
-}
+    private function buildInventoryItems(array $dishes): array
+    {
+        $items = [];
+        $seen = [];
 
-private function resolveSelectionGroupId(array $item, array $dishGroupMap): ?string
-{
-    foreach ($item['tags'] ?? [] as $tagId) {
-        if (is_scalar($tagId) && (string) $tagId !== '') {
-            return (string) $tagId;
+        foreach ($dishes as $dish) {
+            $dishId = (string) ($dish['id'] ?? '');
+            if ($dishId === '' || isset($seen[$dishId])) {
+                continue;
+            }
+
+            $seen[$dishId] = true;
+            $items[] = (new InventoryItem())
+                ->setType(InventoryItem::TYPE_ITEM)
+                ->setId($dishId)
+                ->setTitle((string) ($dish['name'] ?? 'Unnamed dish'));
         }
+
+        return $items;
     }
 
-    $dishId = (string) ($item['item_id'] ?? $item['id'] ?? '');
+    private function buildDishGroupMap(string $apiKey): array
+    {
+        $dishes = $this->zeltyClient->getDishes($apiKey, showAll: true);
+        if (!is_array($dishes)) {
+            return [];
+        }
 
-    return $dishGroupMap[$dishId] ?? null;
-}
+        $map = [];
+        foreach ($dishes as $dish) {
+            $dishId = (string) ($dish['id'] ?? '');
+            if ($dishId === '') {
+                continue;
+            }
+
+            $tags = [];
+            foreach ($dish['tags'] ?? [] as $tagId) {
+                if (is_scalar($tagId) && (string) $tagId !== '') {
+                    $tags[] = (string) $tagId;
+                }
+            }
+
+            if ($tags !== []) {
+                $map[$dishId] = $tags[0];
+            }
+        }
+
+        return $map;
+    }
+
+    private function resolveSelectionGroupId(array $item, array $dishGroupMap): ?string
+    {
+        foreach ($item['tags'] ?? [] as $tagId) {
+            if (is_scalar($tagId) && (string) $tagId !== '') {
+                return (string) $tagId;
+            }
+        }
+
+        $dishId = (string) ($item['item_id'] ?? $item['id'] ?? '');
+
+        return $dishGroupMap[$dishId] ?? null;
+    }
+
+    private function apiKeyOwnsRestaurant(string $apiKey, string $restaurantId): bool
+    {
+        $restaurants = $this->zeltyClient->getRestaurants($apiKey);
+        if (!is_array($restaurants) || $restaurants === []) {
+            return false;
+        }
+
+        foreach ($restaurants as $restaurant) {
+            if ((string) ($restaurant['id'] ?? '') === $restaurantId) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private function resolveCurrency(array $data): string
     {
@@ -565,7 +591,7 @@ private function resolveSelectionGroupId(array $item, array $dishGroupMap): ?str
 
         return self::DEFAULT_CURRENCY;
     }
-    
+
     private function getCredential(Request $request, string $name): ?string
     {
         try {
