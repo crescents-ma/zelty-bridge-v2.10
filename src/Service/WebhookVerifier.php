@@ -2,20 +2,28 @@
 
 namespace App\Service;
 
+use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
 
 class WebhookVerifier
 {
-    private string $secret;
+    private string $globalSecret;
 
-    public function __construct()
-    {
-        $this->secret = (string) ($_SERVER['ZELTY_WEBHOOK_SECRET'] ?? $_ENV['ZELTY_WEBHOOK_SECRET'] ?? '');
+    public function __construct(
+        readonly private MerchantSecretStore $secretStore,
+        readonly private LoggerInterface $logger,
+    ) {
+        $this->globalSecret = (string) ($_SERVER['ZELTY_WEBHOOK_SECRET'] ?? $_ENV['ZELTY_WEBHOOK_SECRET'] ?? '');
     }
 
     public function verify(Request $request, string $restaurantId): bool
     {
-        if ($this->secret === '') {
+        $secret = $this->secretStore->get($restaurantId) ?: $this->globalSecret;
+        if ($secret === '') {
+            $this->logger->warning('[webhook_verifier] missing secret', [
+                'restaurant_id' => $restaurantId,
+            ]);
+
             return false;
         }
 
@@ -25,7 +33,7 @@ class WebhookVerifier
         }
 
         $rawBody = $request->getContent();
-        $expected = hash_hmac('sha256', $rawBody, $this->secret);
+        $expected = hash_hmac('sha256', $rawBody, $secret);
         $provided = preg_replace('/^sha256=/', '', trim($providedSignature));
 
         return hash_equals($expected, $provided);
