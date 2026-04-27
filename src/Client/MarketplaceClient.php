@@ -141,6 +141,4 @@ class MarketplaceClient
     {
         $this->logger->info(sprintf('[marketplace_client] %s', $message), $context);
     }
-
-
 }
