@@ -45,7 +45,6 @@ class MarketplaceClient
         );
 
         return $output->getCredentialValue($name);
-
     }
 
     public function resolveCredentials(ResolveCredentialsInput $input): ?ResolveCredentialsOutput
@@ -98,3 +97,47 @@ class MarketplaceClient
             }
 
             $doRequest = function () use ($method, $url, $options, $requestBody) {
+                $response = $this->httpClient->request($method, $url, $options);
+                $this->debug(sprintf('Request %s %s', $method, $url), [
+                    'request_body' => $requestBody,
+                    'response' => $response,
+                ]);
+
+                return $response->getContent();
+            };
+
+            $responseContent = $cacheTtl
+                ? $this->cache->get(
+                    $this->buildCacheKey($method, $url, $requestBody),
+                    function (ItemInterface $item) use ($doRequest, $cacheTtl) {
+                        $item->expiresAfter($cacheTtl);
+                        return $doRequest();
+                    }
+                )
+                : $doRequest();
+
+            return json_decode($responseContent, true, flags: JSON_THROW_ON_ERROR);
+
+        } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                $this->debug(sprintf('Request %s %s Error', $method, $url), [
+                    'request_body' => $requestBody,
+                    'response' => $e->getResponse(),
+                ]);
+            } else {
+                $this->logger->error($e);
+            }
+            return null;
+        }
+    }
+
+    public function buildCacheKey(string $method, string $url, string $requestBody): string
+    {
+        return sha1($method . $url . $requestBody);
+    }
+
+    public function debug(string $message, array $context = []): void
+    {
+        $this->logger->info(sprintf('[marketplace_client] %s', $message), $context);
+    }
+}
