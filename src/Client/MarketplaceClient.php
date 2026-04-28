@@ -1,144 +1,74 @@
 <?php
 
-namespace App\Client;
+namespace App\Service;
 
-use App\DTO\AccrueInput;
-use App\DTO\Credential;
-use App\DTO\ResolveCredentialsInput;
-use App\DTO\ResolveCredentialsOutput;
-use App\DTO\ReverseInput;
-use App\Traits\SerializerAwareTrait;
 use Psr\Log\LoggerInterface;
-use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
-use Symfony\Component\Serializer\Encoder\JsonEncoder;
-use Symfony\Contracts\Cache\CacheInterface;
-use Symfony\Contracts\Cache\ItemInterface;
-use Symfony\Contracts\HttpClient\Exception\HttpExceptionInterface;
-use Symfony\Contracts\HttpClient\HttpClientInterface;
 
-class MarketplaceClient
+/**
+ * File-based storage for the Zelty API key associated with a restaurant_id.
+ *
+ * This lets webhook-driven accruals recover the original merchant API key
+ * without depending on TRYB credential resolution by restaurant id.
+ */
+class MerchantCredentialStore
 {
-    use SerializerAwareTrait;
-
-    private string $baseUrl;
-    private string $appToken;
-
-    private ?int $resolveCredentialsCacheTtl;
+    private string $storagePath;
 
     public function __construct(
-        readonly private HttpClientInterface $httpClient,
+        string $projectDir,
         readonly private LoggerInterface $logger,
-        readonly private CacheInterface $cache,
-        ParameterBagInterface $params,
     ) {
-        $this->baseUrl = $params->get('marketplace_api_base_url');
-        $this->appToken = $params->get('marketplace_api_app_token');
-        $this->resolveCredentialsCacheTtl = $params->get('marketplace_api_resolve_credentials_cache_ttl');
+        $baseStoragePath = $_SERVER['APP_STORAGE_PATH'] ?? $_ENV['APP_STORAGE_PATH'] ?? ($projectDir . '/var');
+        $baseStoragePath = rtrim($baseStoragePath, '/\\');
+        $this->storagePath = $baseStoragePath . '/credentials';
+        if (!is_dir($this->storagePath)) {
+            @mkdir($this->storagePath, 0700, true);
+        }
     }
 
-    public function resolveCredential(string $name, string $fromName, string $fromValue): ?string
+    public function store(string $restaurantId, string $apiKey): bool
     {
-        $output = $this->resolveCredentials(
-            (new ResolveCredentialsInput())
-                ->setNames([$name])
-                ->setCredentials([Credential::create($fromName, $fromValue)])
-        );
+        $file = $this->filePath($restaurantId);
+        $data = json_encode([
+            'restaurant_id' => $restaurantId,
+            'api_key' => $apiKey,
+            'created_at' => date('c'),
+        ], JSON_THROW_ON_ERROR);
 
-        return $output->getCredentialValue($name);
+        $result = file_put_contents($file, $data, LOCK_EX);
+        if ($result === false) {
+            $this->logger->error('[credential_store] failed to write', ['restaurant_id' => $restaurantId]);
+            return false;
+        }
 
+        @chmod($file, 0600);
+
+        return true;
     }
 
-    public function resolveCredentials(ResolveCredentialsInput $input): ?ResolveCredentialsOutput
+    public function get(string $restaurantId): ?string
     {
-        $result = $this->post('/resolve-credentials', $input, cacheTtl: $this->resolveCredentialsCacheTtl);
+        $file = $this->filePath($restaurantId);
+        if (!is_readable($file)) {
+            return null;
+        }
 
-        return $this->getSerializer()->denormalize($result, ResolveCredentialsOutput::class, JsonEncoder::FORMAT);
-    }
-
-    public function accrue(AccrueInput $input): ?array
-    {
-        return $this->post('/accrue', $input);
-    }
-
-    public function reverse(ReverseInput $input): ?array
-    {
-        return $this->post('/reverse', $input);
-    }
-
-    public function get(string $path, ?int $cacheTtl): ?array
-    {
-        return $this->request('GET', $path, cacheTtl: $cacheTtl);
-    }
-
-    public function post(string $path, object|array|null $request = null, ?int $cacheTtl = null): ?array
-    {
-        return $this->request('POST', $path, $request, $cacheTtl);
-    }
-
-    public function request(
-        string $method,
-        string $path,
-        object|array|null $request = null,
-        ?int $cacheTtl = null
-    ): ?array
-    {
-        $url = $this->baseUrl . $path;
-        $options = [
-            'headers' => [
-                'X-App-Token' => $this->appToken,
-            ],
-        ];
-
-        $requestBody = '';
         try {
-            if (null !== $request) {
-                $requestBody = $this->getSerializer()->serialize($request, JsonEncoder::FORMAT);
-                $options['headers']['content-type'] = 'application/json';
-                $options['body'] = $requestBody;
-            }
+            $data = json_decode(file_get_contents($file), true, flags: JSON_THROW_ON_ERROR);
+            return $data['api_key'] ?? null;
+        } catch (\JsonException $e) {
+            $this->logger->error('[credential_store] corrupt file', [
+                'restaurant_id' => $restaurantId,
+                'error' => $e->getMessage(),
+            ]);
 
-            $doRequest = function () use ($method, $url, $options, $requestBody) {
-                $response = $this->httpClient->request($method, $url, $options);
-                $this->debug(sprintf('Request %s %s', $method, $url), [
-                    'request_body' => $requestBody,
-                    'response' => $response,
-                ]);
-
-                return $response->getContent();
-            };
-
-            $responseContent = $cacheTtl
-                ? $this->cache->get(
-                    $this->buildCacheKey($method, $url, $requestBody),
-                    function(ItemInterface $item) use ($doRequest, $cacheTtl) {
-                        $item->expiresAfter($cacheTtl);
-                        return $doRequest();
-                    }
-                )
-                : $doRequest();
-
-            return json_decode($responseContent, true, flags: JSON_THROW_ON_ERROR);
-
-        } catch (\Exception $e) {
-            if ($e instanceof HttpExceptionInterface) {
-                $this->debug(sprintf('Request %s %s Error', $method, $url), [
-                    'request_body' => $requestBody,
-                    'response' => $e->getResponse(),
-                ]);
-            } else {
-                $this->logger->error($e);
-            }
             return null;
         }
     }
 
-    public function buildCacheKey(string $method, string $url, string $requestBody): string
+    private function filePath(string $restaurantId): string
     {
-        return sha1($method . $url . $requestBody);
-    }
-
-    public function debug(string $message, array $context = []): void
-    {
-        $this->logger->info(sprintf('[marketplace_client] %s', $message), $context);
+        $safe = preg_replace('/[^a-zA-Z0-9_-]/', '', $restaurantId);
+        return $this->storagePath . '/merchant_' . $safe . '.json';
     }
 }
