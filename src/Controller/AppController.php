@@ -1,100 +1,203 @@
 <?php
 
-namespace App\Controller;
+namespace App\Client;
 
-use App\Client\MarketplaceClient;
-use App\Client\ZeltyClient;
-use App\DTO\AccrueInput;
-use App\DTO\Check;
-use App\DTO\Credential;
-use App\DTO\Response\GetInventoryResponse;
-use App\DTO\Response\InventoryItem;
-use App\DTO\ReverseInput;
-use App\DTO\Selection;
-use App\Service\MerchantCredentialStore;
-use App\Service\IdempotencyStore;
-use App\Service\WebhookVerifier;
-use App\Traits\SerializerAwareTrait;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
-use Symfony\Component\HttpFoundation\JsonResponse;
-use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\HttpKernel\Attribute\AsController;
-use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
-use Symfony\Component\Routing\Attribute\Route;
-use Symfony\Component\Serializer\Encoder\JsonEncoder;
-use Symfony\Component\Serializer\Normalizer\AbstractObjectNormalizer;
+use Symfony\Contracts\HttpClient\Exception\ExceptionInterface;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
 
-#[AsController]
-class AppController
+/**
+ * Zelty POS API client — built from the official OpenAPI spec.
+ *
+ * Auth: Bearer token (securitySchemes.bearer)
+ * Base URL: configurable via ZELTY_API_BASE_URI env var
+ *
+ * All monetary values are in CENTS (integer, no comma).
+ * All responses are wrapped: { "resource": ..., "errno": 0 }
+ */
+class ZeltyClient
 {
-    use SerializerAwareTrait;
-
-    private const DEFAULT_CURRENCY = 'EUR';
-    private const MAX_PAYLOAD_SIZE = 262144; // 256 KB
-
-    private string $publicBaseUrl;
+    private string $baseUrl;
 
     public function __construct(
-        readonly private ZeltyClient $zeltyClient,
-        readonly private MarketplaceClient $marketplaceClient,
-        readonly private MerchantCredentialStore $credentialStore,
-        readonly private IdempotencyStore $idempotencyStore,
-        readonly private WebhookVerifier $webhookVerifier,
+        readonly private HttpClientInterface $httpClient,
         readonly private LoggerInterface $logger,
         ParameterBagInterface $params,
     ) {
-        $this->publicBaseUrl = rtrim(
-            $params->get('app_public_url')
-                ?: ($_SERVER['RAILWAY_PUBLIC_DOMAIN'] ?? $_ENV['RAILWAY_PUBLIC_DOMAIN'] ?? ''),
-            '/'
-        );
+        $this->baseUrl = rtrim($params->get('zelty_api_base_url'), '/');
+    }
 
-        if ($this->publicBaseUrl !== '' && !str_contains($this->publicBaseUrl, '://')) {
-            $this->publicBaseUrl = 'https://' . $this->publicBaseUrl;
+    public function ping(string $apiKey): bool
+    {
+        try {
+            $data = $this->get($apiKey, '/customers', ['limit' => 1]);
+            return isset($data['errno']) && $data['errno'] === 0;
+        } catch (\Exception $e) {
+            $this->logger->warning('[zelty] ping failed', ['error' => $e->getMessage()]);
+            return false;
         }
     }
 
-    #[Route('/health', methods: 'GET')]
-    public function health(): JsonResponse
-    {
-        return new JsonResponse(['ok' => true]);
-    }
-
-    #[Route('/', methods: 'GET')]
-    #[Route('/index.php', methods: 'GET')]
-    public function home(): JsonResponse
-    {
-        return new JsonResponse([
-            'ok' => true,
-            'service' => 'TRYB Loyalty x Zelty bridge',
-            'endpoints' => [
-                'health' => 'GET /health',
-                'checkCredentials' => 'POST /check-credentials',
-                'getInventory' => 'POST /get-inventory',
-                'postback' => 'POST /postback',
-                'onOrder' => 'POST /on-order',
-            ],
-        ]);
-    }
-
-    #[Route('/check-credentials', methods: 'GET')]
-    #[Route('/get-inventory', methods: 'GET')]
-    #[Route('/postback', methods: 'GET')]
-    #[Route('/on-order', methods: 'GET')]
-    public function endpointInfo(Request $request): JsonResponse
-    {
-        return new JsonResponse([
-            'ok' => true,
-            'message' => 'This endpoint is live, but it must be called with POST by TRYB or Zelty.',
-            'path' => $request->getPathInfo(),
-            'method' => 'POST',
-        ]);
-    }
-
-    #[Route('/on-order', methods: 'POST')]
-    public function onOrder(Request $request): JsonResponse
-    {
-        if (strlen($request->getContent()) > self::MAX_PAYLOAD_SIZE) {
-            return new JsonResponse(['error' => 'Payload too large'], 413);
+    public function getTags(
+        string $apiKey,
+        bool $showAll = false,
+        bool $allRestaurants = false
+    ): ?array {
+        $query = [];
+        if ($showAll) {
+            $query['show_all'] = 'true';
         }
+        if ($allRestaurants) {
+            $query['all_restaurants'] = 'true';
+        }
+
+        $data = $this->get($apiKey, '/catalog/tags', $query);
+        return $data['tags'] ?? null;
+    }
+
+    public function getDishes(
+        string $apiKey,
+        bool $showAll = false,
+        bool $allRestaurants = false
+    ): ?array {
+        $query = [];
+        if ($showAll) {
+            $query['show_all'] = 'true';
+        }
+        if ($allRestaurants) {
+            $query['all_restaurants'] = 'true';
+        }
+        $data = $this->get($apiKey, '/catalog/dishes', $query);
+        return $data['dishes'] ?? null;
+    }
+
+    public function listOrders(
+        string $apiKey,
+        string $from,
+        string $to,
+        ?string $expand = 'items,customer',
+    ): ?array {
+        $query = [
+            'from' => $from,
+            'to' => $to,
+        ];
+        if ($expand) {
+            $query['expand'] = $expand;
+        }
+        $data = $this->get($apiKey, '/orders', $query);
+        return $data['orders'] ?? null;
+    }
+
+    public function getOrder(string $apiKey, int|string $orderId, ?string $expand = 'items,customer'): ?array
+    {
+        $query = $expand ? ['expand' => $expand] : [];
+        $data = $this->get($apiKey, '/orders/' . $orderId, $query);
+        return $data['order'] ?? null;
+    }
+
+    public function getCustomers(string $apiKey, array $filters = []): ?array
+    {
+        $data = $this->get($apiKey, '/customers', $filters);
+        return $data['customers'] ?? null;
+    }
+
+    public function getCustomer(string $apiKey, int|string $id): ?array
+    {
+        $data = $this->get($apiKey, '/customers/' . $id);
+        return $data['customer'] ?? null;
+    }
+
+    public function addLoyaltyPoints(string $apiKey, int|string $customerId, int $points): bool
+    {
+        try {
+            $response = $this->httpClient->request(
+                'POST',
+                $this->baseUrl . '/customers/' . $customerId . '/add_loyalty',
+                [
+                    'headers' => $this->headers($apiKey),
+                    'json' => ['points' => $points],
+                ]
+            );
+            $data = json_decode($response->getContent(false), true, flags: JSON_THROW_ON_ERROR);
+            return isset($data['errno']) && $data['errno'] === 0;
+        } catch (ExceptionInterface|\JsonException $e) {
+            $this->logger->error('[zelty] add_loyalty failed', [
+                'customer_id' => $customerId,
+                'points' => $points,
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
+    }
+
+    public function upsertWebhooks(string $apiKey, array $webhooks, string $secretKey): ?array
+    {
+        try {
+            $response = $this->httpClient->request(
+                'POST',
+                $this->baseUrl . '/webhooks',
+                [
+                    'headers' => $this->headers($apiKey),
+                    'json' => [
+                        'webhooks' => $webhooks,
+                        'secret_key' => $secretKey,
+                    ],
+                ]
+            );
+
+            return json_decode($response->getContent(false), true, flags: JSON_THROW_ON_ERROR);
+        } catch (ExceptionInterface|\JsonException $e) {
+            $this->logger->error('[zelty] upsertWebhooks failed', [
+                'base_url' => $this->baseUrl,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    public function getWebhooks(string $apiKey): ?array
+    {
+        $data = $this->get($apiKey, '/webhooks');
+        return is_array($data) ? $data : null;
+    }
+
+    public function getRestaurants(string $apiKey): ?array
+    {
+        $data = $this->get($apiKey, '/restaurants');
+        return $data['restaurants'] ?? null;
+    }
+
+    private function get(string $apiKey, string $path, array $query = []): ?array
+    {
+        try {
+            $response = $this->httpClient->request(
+                'GET',
+                $this->baseUrl . $path,
+                [
+                    'headers' => $this->headers($apiKey),
+                    'query' => $query,
+                ]
+            );
+            return json_decode($response->getContent(false), true, flags: JSON_THROW_ON_ERROR);
+        } catch (ExceptionInterface|\JsonException $e) {
+            $this->logger->error('[zelty][debug] GET failed', [
+                'path' => $path,
+                'query' => $query,
+                'base_url' => $this->baseUrl,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    private function headers(string $apiKey): array
+    {
+        return [
+            'Authorization' => 'Bearer ' . $apiKey,
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
+        ];
+    }
+}
