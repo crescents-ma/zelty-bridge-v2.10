@@ -1,7 +1,7 @@
 # This file is the entry point to configure your own services.
 
 parameters:
-    # TRYB / Boomerangme Marketplace
+    # TRYB Marketplace
     marketplace_api_base_url: '%env(MARKETPLACE_API_BASE_URI)%'
     marketplace_api_app_token: '%env(MARKETPLACE_API_APP_TOKEN)%'
     marketplace_api_resolve_credentials_cache_ttl: '%env(default::MARKETPLACE_API_CREDENTIAL_CACHE_TTL)%'
@@ -9,7 +9,7 @@ parameters:
     # Zelty POS
     zelty_api_base_url: '%env(ZELTY_API_BASE_URI)%'
 
-    # Public URL of THIS app (used when registering the Zelty webhook)
+    # Public URL of THIS app (used when registering the Zelty webhook target)
     app_public_url: '%env(APP_PUBLIC_URL)%'
 
 services:
@@ -25,10 +25,6 @@ services:
             - '../src/Kernel.php'
 
     # Services that need the project dir (for file-based storage)
-    App\Service\MerchantSecretStore:
-        arguments:
-            $projectDir: '%kernel.project_dir%'
-
     App\Service\MerchantCredentialStore:
         arguments:
             $projectDir: '%kernel.project_dir%'
