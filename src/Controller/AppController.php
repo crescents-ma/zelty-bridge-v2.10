@@ -174,27 +174,24 @@ class AppController
         $dishGroupMap = $this->buildDishGroupMap($apiKey);
 
         $customer = $data['customer'] ?? [];
-        $contents = $data['contents'] ?? [];
+        $orderItems = $this->resolveOrderItems($data);
 
         $selections = [];
-        foreach ($contents as $item) {
-            $itemPrice = 0;
-            if (is_int($item['price'] ?? null)) {
-                $itemPrice = $item['price'];
-            } elseif (is_array($item['price'] ?? null)) {
-                $itemPrice = (int) ($item['price']['final_amount_inc_tax'] ?? 0);
-            }
+        foreach ($orderItems as $item) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $itemPrice = $this->resolveItemUnitPrice($item);
+            $itemTotalPrice = $this->resolveItemTotalPrice($item, $quantity, $itemPrice);
 
             $selections[] = (new Selection())
                 ->setId((string) ($item['item_id'] ?? $item['id'] ?? ''))
                 ->setDisplayName((string) ($item['name'] ?? 'Unknown item'))
                 ->setGroupId($this->resolveSelectionGroupId($item, $dishGroupMap))
                 ->setPrice($itemPrice)
-                ->setTotalPrice($itemPrice)
-                ->setQuantity(max(1, (int) ($item['quantity'] ?? 1)));
+                ->setTotalPrice($itemTotalPrice)
+                ->setQuantity($quantity);
         }
 
-        $totalCents = max(0, (int) ($data['price'] ?? 0));
+        $totalCents = $this->resolveOrderTotalCents($data, $selections);
 
         $check = (new Check())
             ->setAmount($totalCents)
@@ -561,6 +558,93 @@ class AppController
         $dishId = (string) ($item['item_id'] ?? $item['id'] ?? '');
 
         return $dishGroupMap[$dishId] ?? null;
+    }
+
+    private function resolveOrderItems(array $data): array
+    {
+        $items = $data['items'] ?? $data['contents'] ?? [];
+
+        return is_array($items) ? array_values(array_filter($items, 'is_array')) : [];
+    }
+
+    private function resolveItemUnitPrice(array $item): int
+    {
+        $rawPrice = $item['price'] ?? null;
+        if (is_int($rawPrice) || is_float($rawPrice) || (is_string($rawPrice) && is_numeric($rawPrice))) {
+            return max(0, (int) round((float) $rawPrice));
+        }
+
+        if (!is_array($rawPrice)) {
+            return 0;
+        }
+
+        foreach ([
+            'discounted_amount_inc_tax',
+            'final_amount_inc_tax',
+            'original_amount_inc_tax',
+            'base_original_amount_inc_tax',
+            'amount_inc_tax',
+            'amount',
+        ] as $field) {
+            $value = $rawPrice[$field] ?? null;
+            if (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) {
+                return max(0, (int) round((float) $value));
+            }
+        }
+
+        return 0;
+    }
+
+    private function resolveItemTotalPrice(array $item, int $quantity, int $unitPrice): int
+    {
+        $rawPrice = $item['price'] ?? null;
+        if (is_array($rawPrice)) {
+            foreach ([
+                'line_discounted_amount_inc_tax',
+                'line_final_amount_inc_tax',
+                'line_original_amount_inc_tax',
+                'total_amount_inc_tax',
+            ] as $field) {
+                $value = $rawPrice[$field] ?? null;
+                if (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) {
+                    return max(0, (int) round((float) $value));
+                }
+            }
+        }
+
+        return max(0, $unitPrice * max(1, $quantity));
+    }
+
+    private function resolveOrderTotalCents(array $data, array $selections): int
+    {
+        $candidates = [
+            $data['price']['final_amount_inc_tax'] ?? null,
+            $data['price']['discounted_amount_inc_tax'] ?? null,
+            $data['price']['original_amount_inc_tax'] ?? null,
+            $data['price']['amount_inc_tax'] ?? null,
+            $data['price'] ?? null,
+            $data['total_price'] ?? null,
+            $data['totalPrice'] ?? null,
+            $data['amount_cents'] ?? null,
+            $data['total_cents'] ?? null,
+            $data['total']['amount_cents'] ?? null,
+            $data['total']['cents'] ?? null,
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_int($candidate) || is_float($candidate) || (is_string($candidate) && is_numeric($candidate))) {
+                return max(0, (int) round((float) $candidate));
+            }
+        }
+
+        $selectionTotal = 0;
+        foreach ($selections as $selection) {
+            if ($selection instanceof Selection && $selection->getTotalPrice() !== null) {
+                $selectionTotal += max(0, $selection->getTotalPrice());
+            }
+        }
+
+        return $selectionTotal;
     }
 
     private function resolveCurrency(array $data): string
